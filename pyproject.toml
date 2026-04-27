@@ -12,6 +12,7 @@ dependencies = [
   "numpy>=2.4.4",
   "pandas>=3.0.2",
   "pillow>=11.3.0",
+  "pip>=26.1",
   "pydub>=0.25.1",
   "python-pptx>=1.0.2",
   "soundfile>=0.13.1",
