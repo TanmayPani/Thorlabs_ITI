@@ -31,7 +31,7 @@ def setup_ffmpeg():
     os.environ["PATH"] = new_path
 
 
-setup_ffmpeg()
+# setup_ffmpeg()
 
 import soundfile as sf
 import whisperx
@@ -40,15 +40,23 @@ from kokoro.pipeline import KPipeline
 
 
 def process_bom_data(fpath, out_dir):
-    bom_file_path = list(fpath.glob("*.xls[mx]"))[0]
+    print(fpath)
+    bom_file_path = list(fpath.glob("*.xlsm"))[0]
+    print(bom_file_path)
     df_dict = read_excel(bom_file_path, sheet_name=None)
     # keys = list(df_dict.keys())
+    print(list(df_dict.keys()))
     matches = []
     steps = [[], [], []]
     # count = 0
     for idf, (df_key, df) in enumerate(df_dict.items()):
+        print(idf)
+        print(df_key)
+        print(df.head())
         if df_key == "Master_BOM":
-            steps.append(df_key, df[1:], [])
+            steps[0].append(df_key)
+            steps[1].append(df[1:])
+            steps[2].append([])
         elif df_key != "BOM_Export":
             if len(df["Item number"]) > 0:
                 mask = df["Item number"] == "Tool"
@@ -74,6 +82,7 @@ def process_bom_data(fpath, out_dir):
 
     with (out_dir / "AFHeartTxt.pkl").open(mode="wb") as fout:
         pickle.dump(steps[1:], fout)
+        print("Saving BOM pickle file...")
 
 
 def read_and_combine_videos(video_dir, audio_dir, thumbnail_path=None):
@@ -295,8 +304,9 @@ def step_slicer(combined_path, out_dir):
             step["segments"][iseg]["start"] = seg["words"][0]["start"]
             step["segments"][iseg]["end"] = seg["words"][-1]["end"]
             step["segments"][iseg]["text"] = " ".join(w["word"] for w in seg["words"])
-            step["word_segments"][iword]["seg_idx"] = iseg
-            iword += 1
+            for w in seg["words"]:
+                step["word_segments"][iword]["seg_idx"] = iseg
+                iword += 1
 
         step["start"] = step["segments"][0]["start"]
         step["end"] = step["segments"][-1]["end"]

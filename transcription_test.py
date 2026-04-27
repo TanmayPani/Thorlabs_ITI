@@ -5,18 +5,79 @@ app = marimo.App(width="full")
 
 with app.setup:
     import torch
-
+    import pickle
     import whisperx
     from kokoro import KPipeline
-    from pydub import AudioSegment
-
+    from pandas import read_excel, read_pickle, DataFrame
     import marimo as mo
     from IPython.display import Audio, display
+    from pathlib import Path
 
 
     device = "cpu"
 
     audio_file = mo.notebook_dir() / "test" / "combined.mp3"
+
+
+@app.cell
+def _():
+    StepData = read_pickle(Path(".") / "BOM" / "AFHeartTxt.pkl")
+    print(StepData[0][1])
+    print()
+    print(DataFrame(list(StepData[1][1]), columns=["Tools"]))
+    return
+
+
+@app.function
+def process_bom_data(fpath, out_dir):
+    print(fpath)
+    bom_file_path = list(fpath.glob("*.xlsm"))[0]
+    print(bom_file_path)
+    df_dict = read_excel(bom_file_path, sheet_name=None)
+    # keys = list(df_dict.keys())
+    print(list(df_dict.keys()))
+    matches = []
+    steps = [[], [], []]
+    # count = 0
+    for idf, (df_key, df) in enumerate(df_dict.items()):
+        print(idf)
+        print(df_key)
+        print(df.head())
+        if df_key == "Master_BOM":
+            steps[0].append(df_key)
+            steps[1].append(df[1:])
+            steps[2].append([])
+        elif df_key != "BOM_Export":
+            if len(df["Item number"]) > 0:
+                mask = df["Item number"] == "Tool"
+                df["grouper"] = mask.cumsum()
+                group_df_dict = {
+                    group_key: group_df for group_key, group_df in df.groupby("grouper")
+                }
+
+                group_df_dict[1].columns = group_df_dict[1].iloc[0]
+                group_df_dict[1] = group_df_dict[1].loc[:, :"Quantity"]
+                tmpKeys = group_df_dict[0].keys()
+                matches = [j for j in tmpKeys if "unnamed" in j.casefold()]
+                matches.append("grouper")
+                steps[0].append(df_key)
+                steps[1].append(
+                    group_df_dict[0].drop(matches, axis=1).reset_index(drop=True)
+                )
+                steps[2].append(
+                    group_df_dict[1]["Tool Description"]
+                    .dropna()
+                    .reset_index(drop=True)[1:],
+                )
+
+    with (out_dir / "AFHeartTxt.pkl").open(mode="wb") as fout:
+        pickle.dump(steps[1:], fout)
+
+
+@app.cell
+def _():
+    process_bom_data(Path(".") / "BOM",Path(".") / "BOM") 
+    return
 
 
 @app.function

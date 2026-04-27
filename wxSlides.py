@@ -570,14 +570,27 @@ class wxStepSlide(wxTitleOnlySlide):
 
     def SaveToPres(self, pres):
         slide = super().SaveToPres(pres)
-        _ = self.shapes["textbox"][1].SaveToSlide(
-            slide, Cm(0.5), Cm(4), Cm(16), Cm(2), scroll=True, font_size=12
-        )
+
+        title_bottom = slide.shapes.title.top + slide.shapes.title.height
 
         movie, fs_slide, thn_img = self.shapes["movie"][0].SaveToSlide(
-            pres, slide, Cm(33.87 / 2.0), Cm(0.37), Cm(8), Cm(6)
+            pres,
+            slide,
+            slide.shapes.title.left,
+            title_bottom,
+            pres.slide_width / 2.0,
+            2 * pres.slide_height / 3.0,
         )
 
+        _ = self.shapes["textbox"][1].SaveToSlide(
+            slide,
+            slide.shapes.title.left,
+            title_bottom + 2 * pres.slide_height / 3.0,
+            pres.slide_width / 2.0,
+            pres.slide_height / 3.0,
+            scroll=True,
+            font_size=12,
+        )
         return slide, fs_slide
 
 
@@ -630,12 +643,23 @@ class wxStepSlide_wBOM(wxStepSlide):
     def SaveToPres(self, pres):
         slide, fs_slide = super().SaveToPres(pres)
 
+        title_bottom = slide.shapes.title.top + slide.shapes.title.height
         _ = self.shapes["table"][0].SaveToSlide(
-            slide, Cm(0.2), Cm(8), Cm(12), Cm(2.4), font_size=10
+            slide,
+            slide.shapes.title.left + pres.slide_width / 2.0,
+            title_bottom,
+            pres.slide_width / 2.0,
+            pres.slide_height / 4.0,
+            font_size=10,
         )
 
         toolTable = self.shapes["table"][1].SaveToSlide(
-            slide, Cm(12.4), Cm(8), Cm(12), Cm(2.4), font_size=10
+            slide,
+            slide.shapes.title.left + pres.slide_width / 2.0,
+            title_bottom + pres.slide_height / 4.0,
+            pres.slide_width / 2.0,
+            pres.slide_height / 4.0,
+            font_size=10,
         )
         tblf = toolTable._element.graphic.graphicData.tbl
         tblf[0][-1].text = "{1FECB4D8-DB02-4DC6-A0A2-4F2EBAE1DC90}"
