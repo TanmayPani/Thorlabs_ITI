@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+__marimo__/ 
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+StepSegs*/ 
+Videos/
+BOM/
+*.mp4
+*.mp3 
+
+# Virtual environments
+.venv
