@@ -13,7 +13,6 @@ with app.setup:
     from IPython.display import Audio, display
     from pathlib import Path
 
-
     device = "cpu"
 
     audio_file = mo.notebook_dir() / "test" / "combined.mp3"
@@ -100,29 +99,78 @@ def crossfade_combine(a1, a2, cross_ms, sample_rate=24000):
 
 
 @app.cell
-def _(time_margin):
+def _():
+    from itertools import accumulate
+    import operator
     def word_align_seg_kkr_to_wspx(
-        seg_aligned_wspx, seg_kkr_pred, sample_rate=24000, init_offset=0
+        seg_aligned_wspx, seg_kkr_pred, sample_rate=24000, init_offset=0, total_offset = 0
     ):
         kkr_audio_tensor = seg_kkr_pred.audio
-        # kkr_pred_dur_tensor = seg_kkr_pred.pred_dur
-
-        wspx_word_start_times = tuple(word["start"] for word in seg_aligned_wspx["words"])
+        kkr_tokens = seg_kkr_pred.tokens
+        wspx_dur = seg_aligned_wspx["end"] - seg_aligned_wspx["start"]
+        wspx_frames = round(sample_rate*wspx_dur)
+        wspx_dur_per_kkr_token = wspx_dur / len(kkr_tokens)
 
         aligned_kkr_word_segs = []
-        total_offset = int(init_offset)
-
-        for itoken, token in enumerate(seg_kkr_pred.tokens):
-            if len(wspx_word_start_times) > itoken:
-                offset = round(wspx_word_start_times[itoken] * sample_rate)
-                if offset > total_offset:
-                    aligned_kkr_word_segs.append(torch.zeros(offset - total_offset))
-                    total_offset = offset - int(time_margin * sample_rate)
-            start_time = token.start_ts - time_margin
-            end_time = token.end_ts + time_margin
-            start_idx = round(start_time * sample_rate)
-            end_idx = round(end_time * sample_rate)
+        if seg_aligned_wspx["start"] > 0:
+            aligned_kkr_word_segs.append(torch.zeros(round(seg_aligned_wspx["start"] * sample_rate)))
+        for itoken, token in enumerate(kkr_tokens):
+            kkr_start_time = token.start_ts
+            kkr_end_time = token.end_ts
+            start_idx = round(kkr_start_time * sample_rate)
+            end_idx = round(kkr_end_time * sample_rate)
             token_audio = kkr_audio_tensor[start_idx:end_idx]
+            kkr_dur = kkr_start_time - kkr_end_time
+            aligned_kkr_word_segs.append(token_audio)
+            if kkr_dur < wspx_dur_per_kkr_token and itoken < len(kkr_tokens)-1:
+                pause_dur = wspx_dur_per_kkr_token - kkr_dur
+                pause = torch.zeros(round(pause_dur*sample_rate))
+                aligned_kkr_word_segs.append(pause)
+            
+            
+
+    
+        # kkr_pred_dur_tensor = seg_kkr_pred.pred_dur
+        #wspx_word_start_times = tuple(word["start"] for word in seg_aligned_wspx["words"])
+
+        full_phonemes = " ".join(tok.phonemes for tok in seg_kkr_pred.tokens)
+        phoneme_lengths = [len(tok.phonemes)+1 for tok in seg_kkr_pred.tokens]
+        phoneme_lengths[-1] -= 1
+        cumul_phoneme_lens = tuple(accumulate(phoneme_lengths, operator.add, initial=0))
+
+        print(full_phonemes, len(full_phonemes))
+        print(phoneme_lengths)
+        print(cumul_phoneme_lens)
+    
+        wspx_dur = seg_aligned_wspx["end"] - seg_aligned_wspx["start"]
+        wspx_dur_per_phonemo = wspx_dur / len(full_phonemes)
+
+        print(wspx_dur, wspx_dur_per_phonemo)
+
+       # print([round((seg_aligned_wspx["start"] + wspx_dur_per_phonemo*cum_phone)*sample_rate) for cum_phone 
+    
+        wspx_words = seg_aligned_wspx["words"] #list
+
+        aligned_kkr_word_segs = []
+        total_offset = 0
+
+        #iwhisper = 0
+        for itoken, token in enumerate(seg_kkr_pred.tokens):
+            kkr_start_time = token.start_ts
+            kkr_end_time = token.end_ts
+            start_idx = round(kkr_start_time * sample_rate)
+            end_idx = round(kkr_end_time * sample_rate)
+            token_audio = kkr_audio_tensor[start_idx:end_idx]
+            #print(token)
+            #if len(wspx_words) > itoken:
+                #if isinstance(wspx_words[itoken], dict)
+                #    offset = round(wspx_words[itoken]["start"] * sample_rate)
+                #else:
+            offset = round((seg_aligned_wspx["start"] + wspx_dur_per_phonemo*cumul_phoneme_lens[itoken])*sample_rate)
+            if offset > total_offset:
+                aligned_kkr_word_segs.append(torch.zeros(offset - total_offset))
+                total_offset = offset
+        
             total_offset += token_audio.shape[0]
 
             aligned_kkr_word_segs.append(token_audio)
@@ -344,8 +392,10 @@ def _(result, word_align_seg_kkr_to_wspx):
         _segment_kkr_pred = next(
             _pipeline(_segment["text"], voice="af_heart", speed=1.2)
         )
+        print(len(_segment_kkr_pred.tokens), len(_segment["words"]))
+        #continue 
         _aligned_segment_words, _total_offset = word_align_seg_kkr_to_wspx(
-            _segment, _segment_kkr_pred, _sample_rate, _total_offset, time_margin=0.0
+            _segment, _segment_kkr_pred, _sample_rate, _total_offset
         )
         _word_aligned_segment = torch.cat(_aligned_segment_words)
         display(
@@ -364,6 +414,7 @@ def _(result, word_align_seg_kkr_to_wspx):
         _crossfaded = crossfade_combine(_crossfaded, _aligned_words[iw], 50)
 
     _normalizedsound = _crossfaded/(_crossfaded.abs().max())
+
     print(_crossfaded.dtype)
     display(Audio(_normalizedsound , rate=_sample_rate, autoplay=False))
     return

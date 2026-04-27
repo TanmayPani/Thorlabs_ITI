@@ -365,18 +365,58 @@ def map_step_with_word_segments(original_step, edited_step_text):
         if tag in ("equal", "replace"):
             for orig_idx, edit_idx in zip(range(i1, i2), range(j1, j2)):
                 seg_id = orig_words_tracked[orig_idx]["seg_idx"]
-                new_segment_words[seg_id].append(edit_words[edit_idx])
+                new_segment_words[seg_id].append(
+                    {
+                        "word": edit_words[edit_idx],
+                        "start": orig_words_tracked[orig_idx]["start"],
+                        "end": orig_words_tracked[orig_idx]["end"],
+                        "seg_idx": seg_id,
+                    }
+                )
 
         elif tag == "insert":
             seg_id = orig_words_tracked[i1 - 1]["seg_idx"] if i1 > 0 else 0
-            for edit_idx in range(j1, j2):
-                new_segment_words[seg_id].append(edit_words[edit_idx])
+            inserted_words = [edit_words[edit_idx] for edit_idx in range(j1, j2)]
+            # duration_per_word = (
+            #    orig_words_tracked[i1 - 1]["end"] - orig_words_tracked[i1 - 1]["start"]
+            # ) / (len(inserted_words))
+            insert_start = (
+                orig_words_tracked[i1 - 1]["start"]
+                if i1 > 0
+                else orig_words_tracked[0]["start"]
+            )
+
+            insert_end = (
+                orig_words_tracked[i1 - 1]["end"]
+                if i1 > 0
+                else orig_words_tracked[0]["end"]
+            )
+
+            if i1 > 0:
+                inserted_words.insert(0, orig_words_tracked[i1 - 1]["word"])
+            else:
+                inserted_words.append(orig_words_tracked[0]["word"])
+
+            duration_per_word = (insert_end - insert_start) / float(len(inserted_words))
+
+            for iw, w in enumerate(inserted_words):
+                new_segment_words.append(
+                    {
+                        "word": w,
+                        "start": insert_start + iw * duration_per_word,
+                        "end": insert_start + (iw + 1) * duration_per_word,
+                        "seg_idx": seg_id,
+                    }
+                )
+
+            # for edit_idx in range(j1, j2):
+            # new_segment_words[seg_id].append(edit_words[edit_idx])
 
     # 4. Re-roll the segments and apply Kokoro Regex
     for i, seg in enumerate(original_step["segments"]):
         if len(new_segment_words[i]) > 0:
             # The raw text as edited by the user
-            raw_segment_text = " ".join(new_segment_words[i])
+            raw_segment_text = " ".join(w["word"] for w in new_segment_words[i])
 
             # --- APPLY KOKORO REGEX ---
             kokoro_text = normalize_segment_text(raw_segment_text)
@@ -393,9 +433,11 @@ def map_step_with_word_segments(original_step, edited_step_text):
                     "text": raw_segment_text,  # Use this for UI / Subtitles
                     "kokoro_text": kokoro_text,  # Feed this directly into Kokoro
                     "is_edited": is_edited,  # True if the user changed this segment
-                    "words": new_segment_words,
+                    "words": new_segment_words[i],
                 }
             )
+
+            edit_mapped_step["word_segments"].extend(new_segment_words[i])
 
     return edit_mapped_step
 
@@ -442,7 +484,21 @@ def word_align_seg_kkr_to_wspx(
     kkr_audio_tensor = seg_kkr_pred.audio
     # kkr_pred_dur_tensor = seg_kkr_pred.pred_dur
 
-    wspx_word_start_times = tuple(word["start"] for word in seg_aligned_wspx["words"])
+    avg_word_dur = (seg_aligned_wspx["end"] - seg_aligned_wspx["start"]) / float(
+        len(seg_aligned_wspx["words"])
+    )
+
+    print(avg_word_dur)
+    # wspx_word_start_times = tuple(
+    #    word["start"]
+    #    if isinstance(word, dict)
+    #    else seg_aligned_wspx["start"] + iword * avg_word_dur
+    #    for iword, word in enumerate(seg_aligned_wspx["words"])
+    # )
+    wspx_word_start_times = tuple(
+        word["start"] for iword, word in enumerate(seg_aligned_wspx["words"])
+    )
+    print(wspx_word_start_times)
 
     aligned_kkr_word_segs = []
     total_offset = int(init_offset)
@@ -488,16 +544,14 @@ def step_text_to_speech(stepfile, outfile, step_text=None, sample_rate=24000, **
         step = json.load(fin)
 
     step_segs = (
-        map_step_with_word_segments(step, step_text)
-        if step_text is not None
-        else step["segments"]
+        map_step_with_word_segments(step, step_text) if step_text is not None else step
     )
     seg_text_label = "kokoro_text" if step_text is not None else "text"
 
     total_offset = 0
     aligned_words = []
 
-    for iseg, seg in enumerate(step_segs):
+    for iseg, seg in enumerate(step_segs["segments"]):
         seg_kkr_pred = text_to_speech(seg[seg_text_label], **kwargs)
         aligned_seg_words, total_offset = word_align_seg_kkr_to_wspx(
             seg, seg_kkr_pred, sample_rate, total_offset

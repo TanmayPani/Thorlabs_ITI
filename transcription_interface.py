@@ -236,68 +236,68 @@ class ThorLabsITI(wx.Frame):
 
         def worker():
             try:
-                wx.CallAfter(
-                    wx.LogMessage,
-                    "Loading whisper model for transcribing speech into text...",
-                )
+                # wx.CallAfter(
+                #    wx.LogMessage,
+                #    "Loading whisper model for transcribing speech into text...",
+                # )
 
-                speech_to_text(
-                    self.AudioPath / "combined.mp3",
-                    self.TextPath / "combined.json",
-                    model_name="distil-large-v3",
-                    device="cpu",
-                    compute_type="int8",
-                    vad_method="silero",
-                    batch_size=12,
-                    chunk_size=30,
-                )
+                # speech_to_text(
+                #    self.AudioPath / "combined.mp3",
+                #    self.TextPath / "combined.json",
+                #    model_name="distil-large-v3",
+                #    device="cpu",
+                #    compute_type="int8",
+                #    vad_method="silero",
+                #    batch_size=12,
+                #    chunk_size=30,
+                # )
 
-                wx.CallAfter(
-                    wx.LogMessage,
-                    "Speech to text transcription and alignment done! slicing the text instructions into steps...",
-                )
+                # wx.CallAfter(
+                #    wx.LogMessage,
+                #    "Speech to text transcription and alignment done! slicing the text instructions into steps...",
+                # )
 
-                self.Steps[:] = step_slicer(
-                    self.TextPath / "combined.json", self.SegPath
-                )
+                # self.Steps[:] = step_slicer(
+                #    self.TextPath / "combined.json", self.SegPath
+                # )
 
-                wx.CallAfter(
-                    wx.LogMessage, "Using kokoro TTS to obtain audio for steps..."
-                )
+                # wx.CallAfter(
+                #    wx.LogMessage, "Using kokoro TTS to obtain audio for steps..."
+                # )
 
-                stepAudioOutput = [
-                    step_text_to_speech(
-                        slicedStep,
-                        self.SegPath / f"AFHeartFullStep{iStep}.mp3",
-                    )
-                    for iStep, slicedStep in enumerate(self.Steps)
-                ]
+                # stepAudioOutput = [
+                #    step_text_to_speech(
+                #        slicedStep,
+                #        self.SegPath / f"AFHeartFullStep{iStep}.mp3",
+                #    )
+                #    for iStep, slicedStep in enumerate(self.Steps)
+                # ]
 
-                wx.CallAfter(
-                    wx.LogMessage,
-                    "Step-by-step audio slices obtained! Initiating video rendering...",
-                )
+                # wx.CallAfter(
+                #    wx.LogMessage,
+                #    "Step-by-step audio slices obtained! Initiating video rendering...",
+                # )
 
-                stepwiseVideoOutput = video_step_slicer(
-                    self.Steps,
-                    self.VideoPath / "combined.mp4",
-                    stepAudioOutput,
-                    self.SegPath,
-                )
+                # stepwiseVideoOutput = video_step_slicer(
+                #    self.Steps,
+                #    self.VideoPath / "combined.mp4",
+                #    stepAudioOutput,
+                #    self.SegPath,
+                # )
 
-                wx.CallAfter(
-                    wx.LogMessage,
-                    "Kokoro audio added to step by step video...",
-                )
+                # wx.CallAfter(
+                #    wx.LogMessage,
+                #    "Kokoro audio added to step by step video...",
+                # )
 
-                if self.BOMWriterCB.GetValue() == "BOM":
-                    wx.CallAfter(wx.LogMessage, "Extracting BOM data.")
-                    process_bom_data(self.CorePath / "BOM", self.CorePath / "BOM")
-                    wx.CallAfter(wx.LogMessage, "BOM data extracted...")
-                wx.CallAfter(
-                    wx.LogMessage,
-                    "Speech-Text-Speech Processes Complete! Creating slides...",
-                )
+                # if self.BOMWriterCB.GetValue() == "BOM":
+                #    wx.CallAfter(wx.LogMessage, "Extracting BOM data.")
+                #    process_bom_data(self.CorePath / "BOM", self.CorePath / "BOM")
+                #    wx.CallAfter(wx.LogMessage, "BOM data extracted...")
+                # wx.CallAfter(
+                #    wx.LogMessage,
+                #    "Speech-Text-Speech Processes Complete! Creating slides...",
+                # )
                 wx.CallAfter(self.AddSlides)
 
                 wx.CallAfter(
@@ -319,7 +319,7 @@ class ThorLabsITI(wx.Frame):
     def RerenderStepAudio(self, evt):
         def worker():
             try:
-                wx.CallAfter(self.OnRerenderStep)
+                self.OnRerenderStep()
             except Exception:
                 wx.CallAfter(wx.LogMessage, f"Error: {traceback.format_exc()}")
 
@@ -329,8 +329,12 @@ class ThorLabsITI(wx.Frame):
     def OnRerenderStep(self):
         for istep in range(self.presMaker.GetPageCount() - 1):
             print("Rerendering step", istep)
-            self.presMaker.GetPage(istep + 1).shapes["movie"][0].movieCtrl.Stop()
-            self.presMaker.GetPage(istep + 1).shapes["movie"][0].movieCtrl.Load("")
+            wx.CallAfter(
+                self.presMaker.GetPage(istep + 1).shapes["movie"][0].movieCtrl.Stop
+            )
+            wx.CallAfter(
+                self.presMaker.GetPage(istep + 1).shapes["movie"][0].movieCtrl.Load, ""
+            )
             newStepTextsChanged = (
                 self.presMaker.GetPage(istep + 1).shapes["textbox"][1].Text
             )
@@ -363,15 +367,18 @@ class ThorLabsITI(wx.Frame):
             audioClip.close()
             videoClip.close()
 
-            self.presMaker.GetPage(istep + 1).shapes["movie"][0].LoadVideo(
-                str(videoClipPath)
+            wx.CallAfter(
+                self.presMaker.GetPage(istep + 1).shapes["movie"][0].LoadVideo,
+                str(videoClipPath),
             )
 
     def AddSlides(self):
         vidFiles = {}
         print("Adding slides...")
         for vidFile in self.SegPath.glob("TmpOGAud*.mp4"):
+            print(vidFile)
             vidFileStepId = int(vidFile.stem.removeprefix("TmpOGAud"))
+            print(vidFileStepId)
             vidFiles[vidFileStepId] = str(vidFile)
 
         print("Adding slides...")

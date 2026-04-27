@@ -271,7 +271,7 @@ def add_movie(
         width,
         height,
         mime_type=mime_type,
-        poster_frame_image=None,
+        poster_frame_image=poster_frame_image,
     )
     return movie
 
@@ -311,7 +311,6 @@ class wxTextBox(wxShape):
             video_file_prefix = (
                 # f"./StepSegs/scrolling_text_{slide.slide_id}_{len(slide.shapes) + 1}"
                 f"scrolling_text_{slide.slide_id}_{len(slide.shapes) + 1}"
-
             )
             text_to_scrolling_video(
                 self.Text,
@@ -576,7 +575,7 @@ class wxStepSlide(wxTitleOnlySlide):
 
         title_bottom = slide.shapes.title.top + slide.shapes.title.height
 
-        movie, fs_slide, thn_img = self.shapes["movie"][0].SaveToSlide(
+        movie = self.shapes["movie"][0].SaveToSlide(
             pres,
             slide,
             slide.shapes.title.left,
@@ -594,7 +593,7 @@ class wxStepSlide(wxTitleOnlySlide):
             scroll=True,
             font_size=12,
         )
-        return slide, fs_slide
+        return slide
 
 
 class wxStepSlide_wBOM(wxStepSlide):
