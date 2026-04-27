@@ -1,4 +1,3 @@
-import os
 import gc
 import sys
 import pickle
@@ -13,30 +12,14 @@ from natsort import natsorted
 
 import torch
 
-torch.serialization.add_safe_globals(
-    ["omegaconf.listconfig.ListConfig", "omegaconf.dictconfig.DictConfig"]
-)
-
-
-def setup_ffmpeg():
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        base_path = sys._MEIPASS
-    else:
-        base_path = os.path.dirname(os.path.abspath(__file__))
-
-    # The folder where you put ffmpeg.exe, ffprobe.exe, ffplay.exe
-    ffmpeg_dir = os.path.join(base_path, "ffmpeg", "bin")
-    current_path = os.environ.get("PATH", "")
-    new_path = os.path.join(current_path, ffmpeg_dir)
-    os.environ["PATH"] = new_path
-
-
-setup_ffmpeg()
-
 import soundfile as sf
 import whisperx
 from moviepy import concatenate_videoclips, VideoFileClip, AudioFileClip
 from kokoro.pipeline import KPipeline
+
+torch.serialization.add_safe_globals(
+    ["omegaconf.listconfig.ListConfig", "omegaconf.dictconfig.DictConfig"]
+)
 
 
 def process_bom_data(fpath, out_dir):
@@ -114,7 +97,7 @@ def read_and_combine_videos(video_dir, audio_dir, thumbnail_path=None):
 
 
 def video_step_slicer(steps, video_path, step_audio_files, out_dir):
-    assert len(steps) == len(step_audio_files), (
+    assert len(steps) != len(step_audio_files), (
         f"Expected one audio file per step, but got {len(step_audio_files)} audio files for {len(steps)} steps!"
     )
 
@@ -127,11 +110,13 @@ def video_step_slicer(steps, video_path, step_audio_files, out_dir):
             step = json.load(fin)
 
         step_audio = AudioFileClip(step_audio_files[istep])
+        step_video = full_video[step["start"] : step["end"]]
+        step_video_new_audio = full_video_no_audio[
+            step["start"] : step["end"]
+        ].with_audio(step_audio)
 
         step_video_clips.append(str(out_dir / f"AFHeart{istep}.mp4"))
-        full_video_no_audio[step["start"] : step["end"]].with_audio(
-            step_audio
-        ).write_videofile(
+        step_video_new_audio.write_videofile(
             step_video_clips[-1],
             codec="libx264",
             audio_codec="aac",
@@ -140,7 +125,7 @@ def video_step_slicer(steps, video_path, step_audio_files, out_dir):
             threads=8,
         )
 
-        full_video[step["start"] : step["end"]].write_videofile(
+        step_video.write_videofile(
             str(out_dir / f"TmpOGAud{istep}.mp4"),
             codec="libx264",
             audio_codec="aac",
@@ -289,7 +274,9 @@ def step_slicer(combined_path, out_dir):
     step_files = []
     for istep, step in enumerate(steps):
         print(f"Processing step {istep}")
-
+        step["start"] = step["segments"][0]["start"]
+        step["end"] = step["segments"][-1]["end"]
+        print(step["start"], step["end"])
         iword = 0
         for iseg, seg in enumerate(step["segments"]):
             step["segments"][iseg]["start"] = seg["words"][0]["start"]
@@ -298,10 +285,8 @@ def step_slicer(combined_path, out_dir):
             step["word_segments"][iword]["seg_idx"] = iseg
             iword += 1
 
-        step["start"] = step["segments"][0]["start"]
-        step["end"] = step["segments"][-1]["end"]
         step["text"] = " ".join(s["text"] for s in step["segments"])
-        print(step["start"], step["end"], step["text"])
+        print(step["text"])
         step_out_path = out_dir / f"Step{istep}.json"
         print(f"Writing step {istep} to {step_out_path}")
         with step_out_path.open("w") as fout:
@@ -310,7 +295,7 @@ def step_slicer(combined_path, out_dir):
         step_files.append(step_out_path)
 
     print("Step splitting done!")
-    return step_files
+    return step_out_path
 
 
 def normalize_word(word):
@@ -498,7 +483,7 @@ def step_text_to_speech(stepfile, outfile, step_text=None, sample_rate=24000, **
     aligned_step_crossfaded = aligned_words[0]
     for iword in range(1, len(aligned_words)):
         aligned_step_crossfaded = crossfade_combine(
-            aligned_step_crossfaded, aligned_words[iword], 100
+            aligned_step_crossfaded, aligned_words[iword], 50
         )
     aligned_step = aligned_step_crossfaded / aligned_step_crossfaded.abs().max()
 

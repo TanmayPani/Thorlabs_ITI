@@ -7,6 +7,8 @@ dist/
 wheels/
 *.egg-info
 
+snapshot/
+snapshot.zip
 StepSegs*/ 
 Videos/
 BOM/

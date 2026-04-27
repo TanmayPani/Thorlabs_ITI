@@ -1,5 +1,5 @@
-import json
 import traceback
+
 import shutil
 import multiprocessing
 from pathlib import Path
@@ -59,14 +59,13 @@ class ThorLabsITI(wx.Frame):
         )
         self.transcibeStepButton.Disable()
 
-        self.rerenderStepAudioButton = wx.Button(
+        rerenderStepAudioButton = wx.Button(
             buttonSizer.StaticBox, label="Rerender Steps"
         )
         buttonSizer.Add(
-            self.rerenderStepAudioButton,
-            wx.SizerFlags(0).Align(wx.BOTTOM).Border(wx.ALL),
+            rerenderStepAudioButton, wx.SizerFlags(0).Align(wx.BOTTOM).Border(wx.ALL)
         )
-        self.rerenderStepAudioButton.Disable()
+        rerenderStepAudioButton.Disable()
 
         mainSizer = wx.BoxSizer(wx.VERTICAL)
         corePathPicker = wx.DirPickerCtrl(
@@ -108,7 +107,7 @@ class ThorLabsITI(wx.Frame):
         self.Bind(wx.EVT_DIRPICKER_CHANGED, self.OnCorePathPicked, corePathPicker)
         self.Bind(wx.EVT_BUTTON, self.VideoCombination, combineVideoButton)
         self.Bind(wx.EVT_BUTTON, self.TranscribeSteps, self.transcibeStepButton)
-        self.Bind(wx.EVT_BUTTON, self.RerenderStepAudio, self.rerenderStepAudioButton)
+        self.Bind(wx.EVT_BUTTON, self.RerenderStepAudio, rerenderStepAudioButton)
         self.Bind(wx.EVT_TOGGLEBUTTON, self.OnToggleLog, showLogButton)
         self.Bind(wx.EVT_BUTTON, self.OnSavePPTX, self.saveFileButton)
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -152,8 +151,8 @@ class ThorLabsITI(wx.Frame):
         self.presMaker.Save(savePath)
 
     def OnEnableRerender(self, event):
-        if not self.rerenderStepAudioButton.IsEnabled():
-            self.rerenderStepAudioButton.Enable()
+        if not self.RerenderButton.IsEnabled():
+            self.RerenderButton.Enable()
             self.Layout()
             # self.Update()
 
@@ -261,9 +260,7 @@ class ThorLabsITI(wx.Frame):
                     self.TextPath / "combined.json", self.SegPath
                 )
 
-                wx.CallAfter(
-                    wx.LogMessage, "Using kokoro TTS to obtain audio for steps..."
-                )
+                wx.CallAfter(wx.LogMessage, "Using kokoro TTS to audio for steps...")
 
                 stepAudioOutput = [
                     step_text_to_speech(
@@ -285,24 +282,16 @@ class ThorLabsITI(wx.Frame):
                     self.SegPath,
                 )
 
-                wx.CallAfter(
-                    wx.LogMessage,
-                    "Kokoro audio added to step by step video...",
-                )
-
                 if self.BOMWriterCB.GetValue() == "BOM":
                     wx.CallAfter(wx.LogMessage, "Extracting BOM data.")
                     process_bom_data(self.CorePath / "BOM", self.CorePath / "BOM")
-                    wx.CallAfter(wx.LogMessage, "BOM data extracted...")
-                wx.CallAfter(
-                    wx.LogMessage,
-                    "Speech-Text-Speech Processes Complete! Creating slides...",
-                )
-                wx.CallAfter(self.AddSlides)
+                    wx.CallAfter(
+                        wx.LogMessage, "BOM data extracted. Starting presentation."
+                    )
 
                 wx.CallAfter(
                     wx.LogMessage,
-                    "All done, Thank you for your patience!",
+                    "Speech-Text-Speech Processes Complete! Thank you for your patience!",
                 )
 
             except Exception:
@@ -373,59 +362,43 @@ class ThorLabsITI(wx.Frame):
 
     def AddSlides(self):
         vidFiles = {}
-        print("Adding slides...")
         for vidFile in self.SegPath.glob("TmpOGAud*.mp4"):
             vidFileStepId = int(vidFile.stem.removeprefix("TmpOGAud"))
             vidFiles[vidFileStepId] = str(vidFile)
 
-        print("Adding slides...")
         StepData = (
             read_pickle(self.CorePath / "BOM" / "AFHeartTxt.pkl")
             if self.BOMWriterCB.GetValue() == "BOM"
             else None
         )
 
-        print("Adding slides...")
-        # print(self.Steps)
-        for step in self.SegPath.glob("Step*.json"):
-            istep = int(step.stem.removeprefix("Step"))
-            title = f"Step {istep + 1}"
+        for i in range(len(vidFiles)):
+            title = f"Step {i + 1}"
             # print(SegInds[i])
-            print(title, step)
             BomTableData = (
-                (
-                    StepData[0][istep],
-                    DataFrame(list(StepData[1][istep]), columns=["Tools"]),
-                )
+                (StepData[0][i], DataFrame(list(StepData[1][i]), columns=["Tools"]))
                 if StepData is not None
                 else None
             )
 
-            vidFileName = vidFiles.get(istep, None)
+            vidFileName = vidFiles.get(i, None)
 
-            print(vidFileName)
-            with step.open("r") as fin:
-                stepData = json.load(fin)
-
-            print(f"{title}, {vidFileName}")
             self.presMaker.AddStepSlide(
                 title,
-                stepData["text"],
+                self.StichedSteps[i],
                 vidFileName,
                 BomTableData,
                 movie_thumbnail_file_name=self.SegPath / "FirstFrame.jpg",
             )
-            print(f"{title} slide made")
 
             self.Bind(
                 wx.EVT_TEXT,
                 self.OnEnableRerender,
-                self.presMaker.GetPage(istep + 1).shapes["textbox"][1].textCtrl,
+                self.presMaker.GetPage(i + 1).shapes["textbox"][1].textCtrl,
             )
-            print("Text controls bound")
 
         self.saveFileButton.Enable()
-        self.rerenderStepAudioButton.Enable()
+        self.RerenderButton.Enable()
 
 
 if __name__ == "__main__":

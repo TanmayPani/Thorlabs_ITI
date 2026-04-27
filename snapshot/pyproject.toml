@@ -1,0 +1,25 @@
+[project]
+name = "instruction-transcription-interface"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11, <3.14"
+dependencies = [
+  "ipython>=9.10.1",
+  "kokoro>=0.9.4",
+  "moviepy>=2.2.1",
+  "natsort>=8.4.0",
+  "numpy>=2.4.4",
+  "pandas>=3.0.2",
+  "pillow>=11.3.0",
+  "pydub>=0.25.1",
+  "python-pptx>=1.0.2",
+  "soundfile>=0.13.1",
+  "torch>=2.8.0",
+  "transformers>=4.57.6",
+  "whisperx>=3.8.5",
+  "wxpython>=4.2.5",
+]
+
+[dependency-groups]
+dev = ["marimo>=0.23.2", "pyinstaller>=6.20.0"]
