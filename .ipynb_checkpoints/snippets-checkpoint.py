@@ -32,7 +32,7 @@ def setup_ffmpeg():
     os.environ["PATH"] = new_path
 
 
-# setup_ffmpeg()
+setup_ffmpeg()
 
 import soundfile as sf
 import whisperx
