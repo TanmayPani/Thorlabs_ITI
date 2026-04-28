@@ -161,7 +161,7 @@ def text_to_scrolling_video(
     )
 
     bg_clip = ColorClip(
-        (_width, _height), color=(255, 255, 255), duration=txt_clip.duration
+        size=(_width, _height), color=(255, 255, 255), duration=txt_clip.duration
     )
     # 7. Composite and Save
     video = CompositeVideoClip([bg_clip, txt_clip]).without_audio().resized(0.5)
@@ -188,8 +188,8 @@ def add_movie(
     height: Length,
     mime_type: str = "video/mp4",
     poster_frame_image: str | None = None,
-    add_fullscreen: bool = True,
-    hide_fullscreen_slide: bool = True,
+    add_fullscreen: bool = False,
+    hide_fullscreen_slide: bool = False,
 ):
     """
     Wrapper around add_movie method of a `pptx.slide.Slide` instance to add movies with functionality to toggle fullscreen mode
@@ -271,7 +271,9 @@ def add_movie(
         width,
         height,
         mime_type=mime_type,
-        poster_frame_image=poster_frame_image,
+        poster_frame_image=poster_frame_image
+        if poster_frame_image is not None
+        else get_thumbnail_from_video(movie_file),
     )
     return movie
 

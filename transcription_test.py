@@ -10,6 +10,8 @@ with app.setup:
     from collections import defaultdict
     #import whisperx
     #from kokoro import KPipeline
+    from moviepy import VideoFileClip, AudioFileClip
+
     import marimo as mo
     from IPython.display import Audio, display
     from pathlib import Path
@@ -23,7 +25,7 @@ with app.setup:
         step_slicer,
         step_text_to_speech,
         video_step_slicer, map_step_with_word_segments,
-        normalize_segment_text
+        normalize_segment_text,
     )
 
 
@@ -36,6 +38,69 @@ with app.setup:
 
 @app.cell
 def _():
+    _istep = 0
+    _audioClipPath = mo.notebook_dir() / "StepSegs" / f"AFHeartFullStep{_istep}.mp3"
+    _videoClipPath = mo.notebook_dir() / "StepSegs" / f"AFHeart{_istep}.mp4"
+
+
+    #print(normalize_segment_text(_newText))
+
+    #mapped_edit_step = map_step_with_word_segments(_stepTxt, _newText)
+    #print(json.dumps(mapped_edit_step, indent=4))
+
+    step_text_to_speech(_stepPath, mo.notebook_dir() / "StepSegs" / f"AFHeartEditedStep{_istep}.mp3", _newText)
+
+    return
+
+
+@app.function
+def RerenderStepAudio(istep, newStepTextsChanged):
+        print(newStepTextsChanged)
+
+        audioClipPath = mo.notebook_dir() / "StepSegs" / f"AFHeartEditedStep{istep}.mp3"
+
+        stepAudioFile, stepSegments = step_text_to_speech(
+            mo.notebook_dir() / "StepSegs" / f"Step{istep}.json",
+            audioClipPath,
+            newStepTextsChanged,
+        )
+
+        # self.Steps[istep]["segments"][:] = stepSegments
+
+        videoClip = (
+            VideoFileClip(mo.notebook_dir() / "StepSegs" / f"AFHeart{istep}.mp4")
+            .resized(0.5)
+            .without_audio()
+        )
+
+        audioClip = AudioFileClip(audioClipPath)
+
+        videoClip = videoClip.with_audio(audioClip)
+
+        videoClip.write_videofile(
+            mo.notebook_dir() / "StepSegs" / f"AFHeartEdited{istep}.mp4",
+            codec="libx264",
+            audio_codec="aac",
+            preset="veryfast",
+            logger=None,
+            threads=8,
+        )
+
+        audioClip.close()
+        videoClip.close()
+
+
+@app.cell
+def _():
+    _istep = 0
+    _stepPath = mo.notebook_dir() / "StepSegs" / f"Step{_istep}.json"
+
+    with _stepPath.open("r") as _fin:
+        _stepTxt = json.load(_fin)
+    _newTxt = "Start step one. Insert shoulder screw through wheel. Apply loctite. Screw into wheel and wheel block. Ensure that you're screwing the wheel onto the side where the set screw will be nearest to the wheel. Use a 964-532 Allen key to tighten. End step one."
+
+    RerenderStepAudio(_istep, _newTxt)
+
     return
 
 

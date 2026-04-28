@@ -109,7 +109,9 @@ class ThorLabsITI(wx.Frame):
         self.Bind(wx.EVT_DIRPICKER_CHANGED, self.OnCorePathPicked, corePathPicker)
         self.Bind(wx.EVT_BUTTON, self.VideoCombination, combineVideoButton)
         self.Bind(wx.EVT_BUTTON, self.TranscribeSteps, self.transcibeStepButton)
-        self.Bind(wx.EVT_BUTTON, self.RerenderStepAudio, self.rerenderStepAudioButton)
+        self.Bind(
+            wx.EVT_BUTTON, self.OnRerenderStepAudios, self.rerenderStepAudioButton
+        )
         self.Bind(wx.EVT_TOGGLEBUTTON, self.OnToggleLog, showLogButton)
         self.Bind(wx.EVT_BUTTON, self.OnSavePPTX, self.saveFileButton)
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -317,61 +319,72 @@ class ThorLabsITI(wx.Frame):
         Thread(target=worker, daemon=True).start()
         self.Layout()
 
-    def RerenderStepAudio(self, evt):
+    def OnRerenderStepAudios(self, evt):
         def worker():
             try:
-                self.OnRerenderStep()
+                for istep in range(self.presMaker.GetPageCount() - 1):
+                    print("Rerendering step", istep)
+                    wx.CallAfter(
+                        self.presMaker.GetPage(istep + 1)
+                        .shapes["movie"][0]
+                        .movieCtrl.Stop
+                    )
+                    wx.CallAfter(
+                        self.presMaker.GetPage(istep + 1)
+                        .shapes["movie"][0]
+                        .movieCtrl.Load,
+                        "",
+                    )
+                    newStepTextsChanged = (
+                        self.presMaker.GetPage(istep + 1).shapes["textbox"][1].Text
+                    )
+                    self.RerenderStepAudio(istep, newStepTextsChanged)
+
+                    wx.CallAfter(
+                        self.presMaker.GetPage(istep + 1).shapes["movie"][0].LoadVideo,
+                        str(self.SegPath / f"AFHeartEdited{istep}.mp4"),
+                    )
             except Exception:
                 wx.CallAfter(wx.LogMessage, f"Error: {traceback.format_exc()}")
 
         Thread(target=worker, daemon=True).start()
         self.Layout()
 
-    def OnRerenderStep(self):
-        for istep in range(self.presMaker.GetPageCount() - 1):
-            print("Rerendering step", istep)
-            wx.CallAfter(
-                self.presMaker.GetPage(istep + 1).shapes["movie"][0].movieCtrl.Stop
-            )
-            wx.CallAfter(
-                self.presMaker.GetPage(istep + 1).shapes["movie"][0].movieCtrl.Load, ""
-            )
-            newStepTextsChanged = (
-                self.presMaker.GetPage(istep + 1).shapes["textbox"][1].Text
-            )
-            print(newStepTextsChanged)
+    def RerenderStepAudio(self, istep, newStepTextsChanged):
 
-            audioClipPath = self.SegPath / f"AFHeartFullStep{istep}.mp3"
-            videoClipPath = self.SegPath / f"AFHeart{istep}.mp4"
+        print(newStepTextsChanged)
 
-            stepAudioFile, stepSegments = step_text_to_speech(
-                self.SegPath / f"Step{istep}.json",
-                audioClipPath,
-                newStepTextsChanged,
-            )
+        audioClipPath = self.SegPath / f"AFHeartEditedStep{istep}.mp3"
 
-            # self.Steps[istep]["segments"][:] = stepSegments
+        stepAudioFile, stepSegments = step_text_to_speech(
+            self.SegPath / f"Step{istep}.json",
+            audioClipPath,
+            newStepTextsChanged,
+        )
 
-            videoClip = VideoFileClip(videoClipPath).resized(0.5).without_audio()
+        # self.Steps[istep]["segments"][:] = stepSegments
 
-            audioClip = AudioFileClip(audioClipPath)
+        videoClip = (
+            VideoFileClip(self.SegPath / f"AFHeart{istep}.mp4")
+            .resized(0.5)
+            .without_audio()
+        )
 
-            videoClip.with_audio(audioClip).write_videofile(
-                str(videoClipPath),
-                codec="libx264",
-                audio_codec="aac",
-                preset="veryfast",
-                logger=None,
-                threads=8,
-            )
+        audioClip = AudioFileClip(audioClipPath)
 
-            audioClip.close()
-            videoClip.close()
+        videoClip = videoClip.with_audio(audioClip)
 
-            wx.CallAfter(
-                self.presMaker.GetPage(istep + 1).shapes["movie"][0].LoadVideo,
-                str(videoClipPath),
-            )
+        videoClip.write_videofile(
+            self.SegPath / f"AFHeartEdited{istep}.mp4",
+            codec="libx264",
+            audio_codec="aac",
+            preset="veryfast",
+            logger=None,
+            threads=8,
+        )
+
+        audioClip.close()
+        videoClip.close()
 
     def AddSlides(self):
         # vidFiles = {}
