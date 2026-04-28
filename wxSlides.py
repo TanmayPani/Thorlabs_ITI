@@ -666,7 +666,7 @@ class wxStepSlide_wBOM(wxStepSlide):
         tblf = toolTable._element.graphic.graphicData.tbl
         tblf[0][-1].text = "{1FECB4D8-DB02-4DC6-A0A2-4F2EBAE1DC90}"
 
-        return slide, fs_slide
+        return slide
 
 
 class wxPresentation(wx.Notebook):
