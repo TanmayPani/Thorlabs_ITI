@@ -4,386 +4,125 @@ __generated_with = "0.23.2"
 app = marimo.App(width="full")
 
 with app.setup:
+    import json
     import torch
-    import pickle
-    import whisperx
-    from kokoro import KPipeline
-    from pandas import read_excel, read_pickle, DataFrame
+    from copy import deepcopy
+    from collections import defaultdict
+    #import whisperx
+    #from kokoro import KPipeline
     import marimo as mo
     from IPython.display import Audio, display
     from pathlib import Path
+    import difflib
+    import re
+
+    from snippets import (
+        process_bom_data,
+        read_and_combine_videos,
+        speech_to_text,
+        step_slicer,
+        step_text_to_speech,
+        video_step_slicer, map_step_with_word_segments,
+        normalize_segment_text
+    )
+
+
 
     device = "cpu"
 
     audio_file = mo.notebook_dir() / "test" / "combined.mp3"
+    out_dir = mo.notebook_dir() / "test"
 
 
 @app.cell
 def _():
-    StepData = read_pickle(Path(".") / "BOM" / "AFHeartTxt.pkl")
-    print(StepData[0][1])
-    print()
-    print(DataFrame(list(StepData[1][1]), columns=["Tools"]))
     return
 
 
-@app.function
-def process_bom_data(fpath, out_dir):
-    print(fpath)
-    bom_file_path = list(fpath.glob("*.xlsm"))[0]
-    print(bom_file_path)
-    df_dict = read_excel(bom_file_path, sheet_name=None)
-    # keys = list(df_dict.keys())
-    print(list(df_dict.keys()))
-    matches = []
-    steps = [[], [], []]
-    # count = 0
-    for idf, (df_key, df) in enumerate(df_dict.items()):
-        print(idf)
-        print(df_key)
-        print(df.head())
-        if df_key == "Master_BOM":
-            steps[0].append(df_key)
-            steps[1].append(df[1:])
-            steps[2].append([])
-        elif df_key != "BOM_Export":
-            if len(df["Item number"]) > 0:
-                mask = df["Item number"] == "Tool"
-                df["grouper"] = mask.cumsum()
-                group_df_dict = {
-                    group_key: group_df for group_key, group_df in df.groupby("grouper")
-                }
-
-                group_df_dict[1].columns = group_df_dict[1].iloc[0]
-                group_df_dict[1] = group_df_dict[1].loc[:, :"Quantity"]
-                tmpKeys = group_df_dict[0].keys()
-                matches = [j for j in tmpKeys if "unnamed" in j.casefold()]
-                matches.append("grouper")
-                steps[0].append(df_key)
-                steps[1].append(
-                    group_df_dict[0].drop(matches, axis=1).reset_index(drop=True)
-                )
-                steps[2].append(
-                    group_df_dict[1]["Tool Description"]
-                    .dropna()
-                    .reset_index(drop=True)[1:],
-                )
-
-    with (out_dir / "AFHeartTxt.pkl").open(mode="wb") as fout:
-        pickle.dump(steps[1:], fout)
+@app.cell
+def _():
+    step_files = step_slicer(out_dir / "combined.json", out_dir)
+    len(step_files)
+    return (step_files,)
 
 
 @app.cell
-def _():
-    process_bom_data(Path(".") / "BOM",Path(".") / "BOM") 
-    return
+def _(step_files):
+
+    _new_text = normalize_segment_text("Stout step twain. We're going to clean the surface with alcohol, [70%]. Clean the entire surface and there are some dark marks that are difficult to remove that you will need nit to use acetone. Do not scuba too hard or you will take off the powder coating. Ending step.")
+
+    with step_files[0].open("r") as fin:
+        _step = json.load(fin)
 
 
-@app.function
-def crossfade_combine(a1, a2, cross_ms, sample_rate=24000):
-    crossfade_samples = min(int(cross_ms/1000.0)*sample_rate, len(a1), len(a2))
-    if crossfade_samples <= 0:
-        return torch.cat([a1, a2])
+    diffs =  difflib.ndiff(_step["text"].split(), _new_text.split())
 
-    fade_out = torch.linspace(1.0, 0.0, crossfade_samples)
-    fade_in = torch.linspace(0.0, 1.0, crossfade_samples)
+    new_word_segments = [[] for _ in _step["segments"]]
+    #print(json.dumps(_step["word_segments"], indent=4))
+    #orig_word_segments = []
 
-    pre_fade = a1[:-crossfade_samples]
-    fade1 = a1[-crossfade_samples:]
-    fade2 = a2[:crossfade_samples]
-    post_fade = a2[crossfade_samples:]
-
-    fade = fade1*fade_out + fade2*fade_in
-
-    return torch.cat([pre_fade, fade, post_fade])
-
-
-@app.cell
-def _():
-    from itertools import accumulate
-    import operator
-    def word_align_seg_kkr_to_wspx(
-        seg_aligned_wspx, seg_kkr_pred, sample_rate=24000, init_offset=0, total_offset = 0
-    ):
-        kkr_audio_tensor = seg_kkr_pred.audio
-        kkr_tokens = seg_kkr_pred.tokens
-        wspx_dur = seg_aligned_wspx["end"] - seg_aligned_wspx["start"]
-        wspx_frames = round(sample_rate*wspx_dur)
-        wspx_dur_per_kkr_token = wspx_dur / len(kkr_tokens)
-
-        aligned_kkr_word_segs = []
-        if seg_aligned_wspx["start"] > 0:
-            aligned_kkr_word_segs.append(torch.zeros(round(seg_aligned_wspx["start"] * sample_rate)))
-        for itoken, token in enumerate(kkr_tokens):
-            kkr_start_time = token.start_ts
-            kkr_end_time = token.end_ts
-            start_idx = round(kkr_start_time * sample_rate)
-            end_idx = round(kkr_end_time * sample_rate)
-            token_audio = kkr_audio_tensor[start_idx:end_idx]
-            kkr_dur = kkr_start_time - kkr_end_time
-            aligned_kkr_word_segs.append(token_audio)
-            if kkr_dur < wspx_dur_per_kkr_token and itoken < len(kkr_tokens)-1:
-                pause_dur = wspx_dur_per_kkr_token - kkr_dur
-                pause = torch.zeros(round(pause_dur*sample_rate))
-                aligned_kkr_word_segs.append(pause)
-            
-            
-
-    
-        # kkr_pred_dur_tensor = seg_kkr_pred.pred_dur
-        #wspx_word_start_times = tuple(word["start"] for word in seg_aligned_wspx["words"])
-
-        full_phonemes = " ".join(tok.phonemes for tok in seg_kkr_pred.tokens)
-        phoneme_lengths = [len(tok.phonemes)+1 for tok in seg_kkr_pred.tokens]
-        phoneme_lengths[-1] -= 1
-        cumul_phoneme_lens = tuple(accumulate(phoneme_lengths, operator.add, initial=0))
-
-        print(full_phonemes, len(full_phonemes))
-        print(phoneme_lengths)
-        print(cumul_phoneme_lens)
-    
-        wspx_dur = seg_aligned_wspx["end"] - seg_aligned_wspx["start"]
-        wspx_dur_per_phonemo = wspx_dur / len(full_phonemes)
-
-        print(wspx_dur, wspx_dur_per_phonemo)
-
-       # print([round((seg_aligned_wspx["start"] + wspx_dur_per_phonemo*cum_phone)*sample_rate) for cum_phone 
-    
-        wspx_words = seg_aligned_wspx["words"] #list
-
-        aligned_kkr_word_segs = []
-        total_offset = 0
-
-        #iwhisper = 0
-        for itoken, token in enumerate(seg_kkr_pred.tokens):
-            kkr_start_time = token.start_ts
-            kkr_end_time = token.end_ts
-            start_idx = round(kkr_start_time * sample_rate)
-            end_idx = round(kkr_end_time * sample_rate)
-            token_audio = kkr_audio_tensor[start_idx:end_idx]
-            #print(token)
-            #if len(wspx_words) > itoken:
-                #if isinstance(wspx_words[itoken], dict)
-                #    offset = round(wspx_words[itoken]["start"] * sample_rate)
-                #else:
-            offset = round((seg_aligned_wspx["start"] + wspx_dur_per_phonemo*cumul_phoneme_lens[itoken])*sample_rate)
-            if offset > total_offset:
-                aligned_kkr_word_segs.append(torch.zeros(offset - total_offset))
-                total_offset = offset
-        
-            total_offset += token_audio.shape[0]
-
-            aligned_kkr_word_segs.append(token_audio)
-
-        return aligned_kkr_word_segs, total_offset
-
-    return (word_align_seg_kkr_to_wspx,)
-
-
-@app.function
-def step_slicer(whisper_result):
-    start_triggers = ("start",)
-    end_triggers = ("end", "and", "finish", "stop")
-
-    segments = whisper_result["segments"]
-    word_segments = whisper_result["word_segments"]
-    total_words = len(word_segments)
-
-    steps = []
     iword = 0
-    start_triggered = False
-    last_filled = {"segment" : -1, "word" : -1}
-    for iseg, seg in enumerate(segments):            
-        for iw, w in enumerate(seg["words"]):
-            if iword < total_words - 2:
-                maybe_step = "step" in word_segments[iword + 1]["word"].casefold()
-                if (
-                    maybe_step
-                    and any(trg in w["word"].casefold() for trg in start_triggers)
-                    and not start_triggered
-                ):
-                    start_triggered = True
 
-                    steps.append({"segments": [], "word_segments": []})
+    for d in diffs:
+        #print(d[:2], d[2:])
+        match d[:2]:
+            case "? ":
+                continue
+            case "+ ":
+                seg_idx = _step["word_segments"][iword - 1]["seg_idx"]
+                new_word_segments[seg_idx].append({"word" : d[2:], "iword_orig":iword-1})
+                print(new_word_segments[seg_idx][-1]["word"], _step["word_segments"][iword - 1]["word"], iword-1)
+            case "- ":
+                #orig_word_segments.append(d[2:])
+                iword += 1
+            case "  ":
+                #orig_word_segments.append(d[2:])
+                seg_idx = _step["word_segments"][iword]["seg_idx"]
+                new_word_segments[seg_idx].append({"word" : d[2:], "iword_orig":iword})
+                iword += 1
 
-                if (
-                    maybe_step
-                    and any(trg in w["word"].casefold() for trg in end_triggers)
-                    and start_triggered
-                ):
-                    if last_filled["segment"] < iseg:
-                        steps[-1]["segments"].append({"words": []})
+                print(new_word_segments[seg_idx][-1]["word"],  _step["word_segments"][iword - 1]["word"], iword-1)
+            case _:
+                raise ValueError("diff prefix can only be one of \"? \", \"+ \", \"- \", \"  \"!!")
+    #print(json.dumps(new_word_segments, indent=4))
 
-                    steps[-1]["segments"][-1]["words"].extend(
-                        word_segments[iword : iword + 3]
-                    )
-                    steps[-1]["word_segments"].extend(word_segments[iword : iword + 3])
+    repeats = defaultdict(list)
+    for iseg, seg in enumerate(new_word_segments):
+        #print(iseg)
+        for iwrd, wrd in enumerate(seg):
+            #print(iseg, iwrd, wrd)
+            repeats[wrd["iword_orig"]].append((iseg, iwrd))
 
-                    steps[-1]["start"] = steps[-1]["word_segments"][0]["start"]
-                    steps[-1]["end"] = steps[-1]["word_segments"][-1]["end"]
-                    #steps[-1]["text"] = " ".join(s["text"] for s in steps[-1]["segments"])
+    for iwrd_orig, new_word_idx in repeats.items():
+        if len(new_word_idx) == 1:
+            iseg, iwrd = new_word_idx[0]
+            new_word_segments[iseg][iwrd]["start"] = _step["word_segments"][iwrd_orig]["start"]
+            new_word_segments[iseg][iwrd]["end"] = _step["word_segments"][iwrd_orig]["end"]
 
-                    start_triggered = False
+        if len(new_word_idx) > 1:
+            num_wrds = len(new_word_idx)
+            tot_dur = _step["word_segments"][iwrd_orig]["end"] - _step["word_segments"][iwrd_orig]["start"]
+            dur_per_wrd = tot_dur / float(num_wrds + 1)
 
-            if start_triggered:
-                steps[-1]["word_segments"].append(w)
-                if last_filled["segment"] < iseg:
-                    steps[-1]["segments"].append({"words": []})
-                steps[-1]["segments"][-1]["words"].append(w)
-                last_filled["segment"] = iseg 
-                last_filled["word"] = iw 
+            for i, (iseg, iwrd) in enumerate(new_word_idx):
+                new_word_segments[iseg][iwrd]["start"] = _step["word_segments"][iwrd_orig]["start"] + i*dur_per_wrd
+                new_word_segments[iseg][iwrd]["end"] = _step["word_segments"][iwrd_orig]["start"] + (i+1)*dur_per_wrd
 
-            iword += 1
+    print(json.dumps(new_word_segments, indent=4))       
 
-        if len(steps[-1]["segments"][-1]["words"]) > 0:
-            steps[-1]["segments"][-1]["start"] = steps[-1]["segments"][-1]["words"][0][
-                "start"
-            ]
-
-            steps[-1]["segments"][-1]["end"] = steps[-1]["segments"][-1]["words"][-1]["end"]
-            steps[-1]["segments"][-1]["text"] = " ".join(
-                w["word"] for w in steps[-1]["segments"][-1]["words"]
-            )
-
-    for istep in range(len(steps)):
-        steps[istep]["text"] = " ".join(s["text"] for s in steps[istep]["segments"])
-
-    return steps
+    #for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+    #    print(tag, i1, i2, j1, j2)
 
 
-@app.cell
-def _():
-    _model = whisperx.load_model(
-        "distil-large-v3", device, compute_type="int8", language="en", vad_method="silero"
-    )
-    _audio = whisperx.load_audio(str(audio_file))
-    _oresult = _model.transcribe(_audio, batch_size=12, chunk_size=30)
-    _model_a, _metadata = whisperx.load_align_model(language_code="en", device=device)
-    result = whisperx.align(
-        _oresult["segments"],
-        _model_a,
-        _metadata,
-        _audio,
-        device,
-        return_char_alignments=False,
-    )
 
-    # display(Audio(_audio, rate=24000, autoplay=False))
-    return (result,)
+    #_rerendered_step = map_step_with_word_segments(_step, _new_text)
 
-
-@app.cell
-def _(result):
-    import json
-    _res = step_slicer(result)
-    print(type(_res))
-    print(json.dumps(_res, indent=4))
-    return (json,)
-
-
-@app.cell
-def _():
-    import re
-    def normalize(word):
-        # Lowercase and strip punctuation for the alignment math
-        return re.sub(r'[^\w\s]', '', word).lower()
-
-    return normalize, re
-
-
-@app.cell
-def _(normalize, re):
-    import difflib 
-    def map_step_with_word_segments(original_step, edited_step_text):
-        # 1. Unroll using WhisperX's pre-defined word segments
-        orig_words_tracked = []  
-        for seg_idx, seg in enumerate(original_step["segments"]):
-            for word_dict in seg.get('words', []):
-                orig_words_tracked.append({
-                    "word": word_dict["word"],
-                    "seg_idx": seg_idx
-                })
-
-        orig_norm = [normalize(item["word"]) for item in orig_words_tracked]
-
-        edit_words = edited_step_text.split()
-        edit_norm = [normalize(w) for w in edit_words]
-
-        # 2. Sequence Alignment
-        matcher = difflib.SequenceMatcher(None, orig_norm, edit_norm)
-        opcodes = matcher.get_opcodes()
-
-        new_segment_words = [[] for _ in range(len(original_step["segments"]))]
-
-        # 3. Distribute edits into segment buckets
-        for tag, i1, i2, j1, j2 in opcodes:
-            if tag in ('equal', 'replace'):
-                for orig_idx, edit_idx in zip(range(i1, i2), range(j1, j2)):
-                    seg_id = orig_words_tracked[orig_idx]["seg_idx"]
-                    new_segment_words[seg_id].append(edit_words[edit_idx])
-
-            elif tag == 'insert':
-                seg_id = orig_words_tracked[i1 - 1]["seg_idx"] if i1 > 0 else 0
-                for edit_idx in range(j1, j2):
-                    new_segment_words[seg_id].append(edit_words[edit_idx])
-
-        # 4. Re-roll the segments and apply Kokoro Regex
-        edit_mapped_step = []
-        for i, seg in enumerate(original_step["segments"]):
-            if new_segment_words[i]:
-                # The raw text as edited by the user
-                raw_segment_text = " ".join(new_segment_words[i])
-
-                # --- APPLY KOKORO REGEX ---
-                # 1. Remove bracketed text and replace hyphens
-                kokoro_text = re.sub(r" ?\[.*?\]", "", raw_segment_text).replace("-", " dash ")
-                # 2. Add spaces between digits for serial number reading
-                kokoro_text = re.sub(r"(\d)", r"\1 ", kokoro_text)
-                # Clean up any accidental double spaces created by the regex
-                kokoro_text = re.sub(r"\s+", " ", kokoro_text).strip()
-
-                edit_mapped_step.append({
-                    "start": seg["start"],
-                    "end": seg["end"],
-                    "orig_text": seg["text"],
-                    "text": raw_segment_text,      # Use this for UI / Subtitles
-                    "kokoro_text": kokoro_text     # Feed this directly into Kokoro
-                })
-
-        return edit_mapped_step
-
-    return (map_step_with_word_segments,)
-
-
-@app.cell
-def _(json, map_step_with_word_segments, result):
-    _res = step_slicer(result)
-    _new_text = "Stout step twain. We're going to clean the surface with alcohol[, 70%]. Clean the entire surface and there are some dark marks that are difficult to remove that you will need nit to use acetone. Do not scuba too hard or you will take off the powder coating. Ending step."
-
-
-    _rec_segs = map_step_with_word_segments(_res[0], _new_text)
-
-    print(json.dumps(_rec_segs, indent=4))
+    #print(json.dumps(_rerendered_step, indent=4))
     return
 
 
-app._unparsable_cell(
-    r"""
-    def match_target_amplitude(sound, target_dBFS_level):
-        change_in_dBFS = target_dBFS_level - sound.dBFS
-        return sound.apply_gain(change_in_dBFS)
-
-    def normalize_audio(sudio target_dBFS_level=14):
-        try:
-            sound_file = AudioSegment.from_file(file_address)
-            normalized_sound = match_target_amplitude(sound_file, target_dBFS_level)
-    """,
-    name="_"
-)
-
-
 @app.cell
-def _(result, word_align_seg_kkr_to_wspx):
+def _(KPipeline, crossfade_combine, result, word_align_seg_kkr_to_wspx):
     _pipeline = KPipeline(lang_code="a")
     _sample_rate = 24000
     _total_offset = 0

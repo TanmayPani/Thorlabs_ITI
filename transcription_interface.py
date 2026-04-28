@@ -25,6 +25,7 @@ class ThorLabsITI(wx.Frame):
     def __init__(self, parent, **kwargs):
         super().__init__(
             parent,
+            id=wx.ID_ANY,
             title=kwargs.pop("title", "Thorlabs Instruction Transcription Interface"),
             size=kwargs.pop("size", (1400, 1200)),
             **kwargs,
@@ -121,19 +122,19 @@ class ThorLabsITI(wx.Frame):
 
         self.Steps = []
 
-        self.CreateStatusBar()
-        statusFont = self.GetStatusBar().GetFont()
-        self.GetStatusBar().SetFont(
-            wx.Font(
-                statusFont.GetPointSize() + 2,
-                statusFont.GetFamily(),
-                statusFont.GetStyle(),
-                statusFont.GetWeight(),
-                statusFont.GetUnderlined(),
-                statusFont.GetFaceName(),
-            )
-        )
-        self.Show()
+        # self.CreateStatusBar()
+        # statusFont = self.GetStatusBar().GetFont()
+        # self.GetStatusBar().SetFont(
+        #    wx.Font(
+        #        statusFont.GetPointSize() + 2,
+        #        statusFont.GetFamily(),
+        #        statusFont.GetStyle(),
+        #        statusFont.GetWeight(),
+        #        statusFont.GetUnderlined(),
+        #        statusFont.GetFaceName(),
+        #    )
+        # )
+        # self.Show()
 
     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -196,7 +197,7 @@ class ThorLabsITI(wx.Frame):
 
         wx.LogMessage(f"Reading video form: {self.VideoPath}")
         # evt.GetEventObject().Disable()
-        self.Layout()
+        # self.Layout()
         # self.Update()
 
         def worker():
@@ -212,10 +213,10 @@ class ThorLabsITI(wx.Frame):
             except Exception:
                 wx.CallAfter(wx.LogMessage, f"Error: {traceback.format_exc()}")
                 wx.CallAfter(evt.GetEventObject().Enable)
-                wx.CallAfter(self.transcibeStepButton.Enable)
+                # wx.CallAfter(self.transcibeStepButton.Enable)
 
             # wx.CallAfter(evt.GetEventObject().Enable)
-            wx.CallAfter(self.transcibeStepButton.Enable)
+            # wx.CallAfter(self.transcibeStepButton.Enable)
 
         Thread(target=worker, daemon=True).start()
         evt.GetEventObject().Enable()
@@ -228,76 +229,76 @@ class ThorLabsITI(wx.Frame):
                 "No core path is selected! Please select a path using the browser..."
             )
 
-        self.SetStatusText("Transcription sequence initiated.")
+        # self.SetStatusText("Transcription sequence initiated.")
         # evt.GetEventObject().Disable()
-        self.Layout()
+        # self.Layout()
         # self.Update()
-        self.SetStatusText("Initiating thread...")  # Untoggle the button
+        # self.SetStatusText("Initiating thread...")  # Untoggle the button
 
         def worker():
             try:
-                # wx.CallAfter(
-                #    wx.LogMessage,
-                #    "Loading whisper model for transcribing speech into text...",
-                # )
+                wx.CallAfter(
+                    wx.LogMessage,
+                    "Loading whisper model for transcribing speech into text...",
+                )
 
-                # speech_to_text(
-                #    self.AudioPath / "combined.mp3",
-                #    self.TextPath / "combined.json",
-                #    model_name="distil-large-v3",
-                #    device="cpu",
-                #    compute_type="int8",
-                #    vad_method="silero",
-                #    batch_size=12,
-                #    chunk_size=30,
-                # )
+                speech_to_text(
+                    self.AudioPath / "combined.mp3",
+                    self.TextPath / "combined.json",
+                    model_name="distil-large-v3",
+                    device="cpu",
+                    compute_type="int8",
+                    vad_method="silero",
+                    batch_size=12,
+                    chunk_size=30,
+                )
 
-                # wx.CallAfter(
-                #    wx.LogMessage,
-                #    "Speech to text transcription and alignment done! slicing the text instructions into steps...",
-                # )
+                wx.CallAfter(
+                    wx.LogMessage,
+                    "Speech to text transcription and alignment done! slicing the text instructions into steps...",
+                )
 
-                # self.Steps[:] = step_slicer(
-                #    self.TextPath / "combined.json", self.SegPath
-                # )
+                self.Steps[:] = step_slicer(
+                    self.TextPath / "combined.json", self.SegPath
+                )
 
-                # wx.CallAfter(
-                #    wx.LogMessage, "Using kokoro TTS to obtain audio for steps..."
-                # )
+                wx.CallAfter(
+                    wx.LogMessage, "Using kokoro TTS to obtain audio for steps..."
+                )
 
-                # stepAudioOutput = [
-                #    step_text_to_speech(
-                #        slicedStep,
-                #        self.SegPath / f"AFHeartFullStep{iStep}.mp3",
-                #    )
-                #    for iStep, slicedStep in enumerate(self.Steps)
-                # ]
+                stepAudioOutput = [
+                    step_text_to_speech(
+                        slicedStep,
+                        self.SegPath / f"AFHeartFullStep{iStep}.mp3",
+                    )
+                    for iStep, slicedStep in enumerate(self.Steps)
+                ]
 
-                # wx.CallAfter(
-                #    wx.LogMessage,
-                #    "Step-by-step audio slices obtained! Initiating video rendering...",
-                # )
+                wx.CallAfter(
+                    wx.LogMessage,
+                    "Step-by-step audio slices obtained! Initiating video rendering...",
+                )
 
-                # stepwiseVideoOutput = video_step_slicer(
-                #    self.Steps,
-                #    self.VideoPath / "combined.mp4",
-                #    stepAudioOutput,
-                #    self.SegPath,
-                # )
+                stepwiseVideoOutput = video_step_slicer(
+                    self.Steps,
+                    self.VideoPath / "combined.mp4",
+                    stepAudioOutput,
+                    self.SegPath,
+                )
 
-                # wx.CallAfter(
-                #    wx.LogMessage,
-                #    "Kokoro audio added to step by step video...",
-                # )
+                wx.CallAfter(
+                    wx.LogMessage,
+                    "Kokoro audio added to step by step video...",
+                )
 
-                # if self.BOMWriterCB.GetValue() == "BOM":
-                #    wx.CallAfter(wx.LogMessage, "Extracting BOM data.")
-                #    process_bom_data(self.CorePath / "BOM", self.CorePath / "BOM")
-                #    wx.CallAfter(wx.LogMessage, "BOM data extracted...")
-                # wx.CallAfter(
-                #    wx.LogMessage,
-                #    "Speech-Text-Speech Processes Complete! Creating slides...",
-                # )
+                if self.BOMWriterCB.GetValue() == "BOM":
+                    wx.CallAfter(wx.LogMessage, "Extracting BOM data.")
+                    process_bom_data(self.CorePath / "BOM", self.CorePath / "BOM")
+                    wx.CallAfter(wx.LogMessage, "BOM data extracted...")
+                wx.CallAfter(
+                    wx.LogMessage,
+                    "Speech-Text-Speech Processes Complete! Creating slides...",
+                )
                 wx.CallAfter(self.AddSlides)
 
                 wx.CallAfter(
@@ -308,10 +309,10 @@ class ThorLabsITI(wx.Frame):
             except Exception:
                 # wx.CallAfter(wx.LogMessage, f"Error: {(AudioFile+'combined.mp3')}")
                 wx.CallAfter(wx.LogMessage, f"Error: {traceback.format_exc()}")
-                wx.CallAfter(evt.GetEventObject().Enable)
+                # wx.CallAfter(evt.GetEventObject().Enable)
 
-            wx.CallAfter(evt.GetEventObject().Enable)
-            #
+            # wx.CallAfter(evt.GetEventObject().Enable)
+            # wx.CallAfter(self.Layout)
 
         Thread(target=worker, daemon=True).start()
         self.Layout()
@@ -373,13 +374,13 @@ class ThorLabsITI(wx.Frame):
             )
 
     def AddSlides(self):
-        vidFiles = {}
-        print("Adding slides...")
-        for vidFile in self.SegPath.glob("TmpOGAud*.mp4"):
-            print(vidFile)
-            vidFileStepId = int(vidFile.stem.removeprefix("TmpOGAud"))
-            print(vidFileStepId)
-            vidFiles[vidFileStepId] = str(vidFile)
+        # vidFiles = {}
+        # print("Adding slides...")
+        # for vidFile in self.SegPath.glob("TmpOGAud*.mp4"):
+        #    print(vidFile)
+        #    vidFileStepId = int(vidFile.stem.removeprefix("TmpOGAud"))
+        #    print(vidFileStepId)
+        #    vidFiles[vidFileStepId] = str(vidFile)
 
         print("Adding slides...")
         StepData = (
@@ -390,11 +391,11 @@ class ThorLabsITI(wx.Frame):
 
         print("Adding slides...")
         # print(self.Steps)
-        for step in self.SegPath.glob("Step*.json"):
-            istep = int(step.stem.removeprefix("Step"))
+        for stepPath in self.SegPath.glob("Step*.json"):
+            istep = int(stepPath.stem.removeprefix("Step"))
             title = f"Step {istep + 1}"
             # print(SegInds[i])
-            print(title, step)
+            # print(title, step)
             BomTableData = (
                 (
                     StepData[0][istep],
@@ -404,31 +405,30 @@ class ThorLabsITI(wx.Frame):
                 else None
             )
 
-            vidFileName = vidFiles.get(istep, None)
+            vidFilePath = self.SegPath / f"TmpOGAud{istep}.mp4"
 
-            print(vidFileName)
-            with step.open("r") as fin:
-                stepData = json.load(fin)
+            with stepPath.open("r") as fin:
+                step = json.load(fin)
 
-            print(f"{title}, {vidFileName}")
+            # print(f"{title}, {vidFilePath}")
             self.presMaker.AddStepSlide(
                 title,
-                stepData["text"],
-                vidFileName,
+                step["text"],
+                str(vidFilePath),
                 BomTableData,
                 movie_thumbnail_file_name=str(self.SegPath / "FirstFrame.jpg"),
             )
-            print(f"{title} slide made")
+            # print(f"{title} slide made")
 
-            self.Bind(
-                wx.EVT_TEXT,
-                self.OnEnableRerender,
-                self.presMaker.GetPage(istep + 1).shapes["textbox"][1].textCtrl,
-            )
-            print("Text controls bound")
+            # self.Bind(
+            #    wx.EVT_TEXT,
+            #    self.OnEnableRerender,
+            #    self.presMaker.GetPage(istep + 1).shapes["textbox"][1].textCtrl,
+            # )
+            # print("Text controls bound")
 
-        self.saveFileButton.Enable()
-        self.rerenderStepAudioButton.Enable()
+        # self.saveFileButton.Enable()
+        # self.rerenderStepAudioButton.Enable()
 
 
 if __name__ == "__main__":
@@ -442,5 +442,5 @@ if __name__ == "__main__":
 
     app = wx.App()
     frame = ThorLabsITI(None)
-    # frame.Show()
+    frame.Show()
     app.MainLoop()
