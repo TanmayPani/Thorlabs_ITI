@@ -283,7 +283,8 @@ def add_movie(
         width,
         height,
         mime_type=mime_type,
-        poster_frame_image=poster_frame_image,
+        poster_frame_image=poster_frame_image if poster_frame_image is not None else get_thumbnail_from_video(movie_file)
+
     )
     return movie
 
@@ -661,19 +662,20 @@ class wxStepSlide_wBOM(wxStepSlide):
         title_bottom = slide.shapes.title.top + slide.shapes.title.height
         _ = self.shapes["table"][0].SaveToSlide(
             slide,
-            Inches(4),
-            title_bottom+2,
-            pres.slide_width / 3.0,
-            pres.slide_height / 5.5,
+            Inches(6.5),
+            title_bottom,
+            pres.slide_width / 4.0,
+            pres.slide_height / 6,
             font_size=10,
         )
 
         toolTable = self.shapes["table"][1].SaveToSlide(
             slide,
-            Inches(4),
-            title_bottom + pres.slide_height / 4.0,
-            pres.slide_width / 3.0,
-            pres.slide_height / 5.5,
+            Inches(6.5),
+            # title_bottom-4,
+            (title_bottom -2) * pres.slide_height / 3.0,
+            pres.slide_width / 4,
+            pres.slide_height / 6,
             font_size=10,
         )
         tblf = toolTable._element.graphic.graphicData.tbl
