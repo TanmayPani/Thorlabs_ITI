@@ -315,8 +315,8 @@ class wxTextBox(wxShape):
             text_to_scrolling_video(
                 self.Text,
                 video_file_prefix,
-                width=int(width.pt),
-                height=int(height.pt),
+                width=width,
+                height=height,
                 font_size=font_size,
                 **kwargs,
             )
@@ -643,7 +643,7 @@ class wxStepSlide_wBOM(wxStepSlide):
         return mainSizer
 
     def SaveToPres(self, pres):
-        slide, fs_slide = super().SaveToPres(pres)
+        slide = super().SaveToPres(pres)
 
         title_bottom = slide.shapes.title.top + slide.shapes.title.height
         _ = self.shapes["table"][0].SaveToSlide(
