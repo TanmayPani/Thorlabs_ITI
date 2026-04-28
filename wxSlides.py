@@ -101,11 +101,11 @@ def text_to_scrolling_video(
     fps=24,
 ):
 
-    _width = width * 2
-    _height = height * 2
-    _font_size = font_size * 2
-    _speed = speed * 2
-    _hmargin = hmargin * 2
+    _width = int(width * 2)
+    _height = int(height * 2)
+    _font_size = int(font_size * 2)
+    _speed = int(speed * 2)
+    _hmargin = int(hmargin * 2)
 
     # 1. Load the Pillow Font
     font = ImageFont.load_default(size=_font_size)
