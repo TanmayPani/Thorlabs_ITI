@@ -6,6 +6,7 @@ import re
 import difflib
 import json
 from functools import lru_cache, reduce
+from collections import defaultdict
 from pathlib import Path
 
 from pandas import read_excel
@@ -31,7 +32,7 @@ def setup_ffmpeg():
     os.environ["PATH"] = new_path
 
 
-setup_ffmpeg()
+# setup_ffmpeg()
 
 import soundfile as sf
 import whisperx
@@ -40,15 +41,24 @@ from kokoro.pipeline import KPipeline
 
 
 def process_bom_data(fpath, out_dir):
-    bom_file_path = list(fpath.glob("*.xls[mx]"))[0]
+    print(fpath)
+    bom_file_path = list(fpath.glob("*.xlsm"))[0]
+    print(bom_file_path)
     df_dict = read_excel(bom_file_path, sheet_name=None)
     # keys = list(df_dict.keys())
+    print(list(df_dict.keys()))
     matches = []
     steps = [[], [], []]
     # count = 0
     for idf, (df_key, df) in enumerate(df_dict.items()):
+        print(idf)
+        print(df_key)
+        print(df.head())
         if df_key == "Master_BOM":
-            steps.append(df_key, df[1:], [])
+            # steps[0].append(df_key)
+            # steps[1].append(df[1:])
+            # steps[2].append([])
+            pass
         elif df_key != "BOM_Export":
             if len(df["Item number"]) > 0:
                 mask = df["Item number"] == "Tool"
@@ -74,6 +84,7 @@ def process_bom_data(fpath, out_dir):
 
     with (out_dir / "AFHeartTxt.pkl").open(mode="wb") as fout:
         pickle.dump(steps[1:], fout)
+        print("Saving BOM pickle file...")
 
 
 def read_and_combine_videos(video_dir, audio_dir, thumbnail_path=None):
@@ -180,8 +191,8 @@ def speech_to_text(
         audio, batch_size=batch_size, chunk_size=chunk_size
     )
 
-    del transcription_model
-    gc.collect()
+    # del transcription_model
+    # gc.collect()
     # torch.cuda().clea
 
     align_model, align_model_metadata = whisperx.load_align_model(
@@ -198,15 +209,15 @@ def speech_to_text(
 
     transcription.clear()
     align_model_metadata.clear()
-    del audio, transcription, align_model, align_model_metadata
-    gc.collect()
+    # del audio, transcription, align_model, align_model_metadata
+    # gc.collect()
 
     with text_output_path.open("w") as fout:
         json.dump(aligned_segments, fout, indent=4)
 
     aligned_segments.clear()
-    del aligned_segments
-    gc.collect()
+    # del aligned_segments
+    # gc.collect()
 
 
 def step_slicer(combined_path, out_dir):
@@ -253,9 +264,6 @@ def step_slicer(combined_path, out_dir):
                             whisper_result["word_segments"][iword : iword + 3]
                         )
 
-                        # steps[-1]["start"] = steps[-1]["word_segments"][0]["start"]
-                        # steps[-1]["end"] = steps[-1]["word_segments"][-1]["end"]
-                        # steps[-1]["text"] = " ".join(s["text"] for s in steps[-1]["segments"])
                         start_triggered = False
 
             word_seg["word"] = word
@@ -268,22 +276,6 @@ def step_slicer(combined_path, out_dir):
                 steps[-1]["segments"][-1]["words"].append(word_seg)
 
             iword += 1
-        # step_seg_idx += 1
-
-        # if len(steps[-1]["segments"][-1]["words"]) > 0:
-        #    steps[-1]["segments"][-1]["start"] = steps[-1]["segments"][-1]["words"][0][
-        #        "start"
-        #    ]
-
-        #    steps[-1]["segments"][-1]["end"] = steps[-1]["segments"][-1]["words"][-1][
-        #        "end"
-        #    ]
-        #    steps[-1]["segments"][-1]["text"] = " ".join(
-        #        w["word"] for w in steps[-1]["segments"][-1]["words"]
-        #    )
-
-    # del whisper_result
-    # gc.collect()
 
     print(f"Step splitting done! Processing {len(steps)} steps")
     step_files = []
@@ -295,8 +287,9 @@ def step_slicer(combined_path, out_dir):
             step["segments"][iseg]["start"] = seg["words"][0]["start"]
             step["segments"][iseg]["end"] = seg["words"][-1]["end"]
             step["segments"][iseg]["text"] = " ".join(w["word"] for w in seg["words"])
-            step["word_segments"][iword]["seg_idx"] = iseg
-            iword += 1
+            for w in seg["words"]:
+                step["word_segments"][iword]["seg_idx"] = iseg
+                iword += 1
 
         step["start"] = step["segments"][0]["start"]
         step["end"] = step["segments"][-1]["end"]
@@ -320,7 +313,9 @@ def normalize_word(word):
 
 def normalize_segment_text(seg_text):
     # 1. Remove bracketed text and replace hyphens
-    seg_text = re.sub(r" ?\[.*?\]", "", seg_text).replace("-", " dash ")
+    seg_text = re.sub(
+        r"\[.*\]", lambda m: "." * len(m.group(0)[1:-1]), seg_text
+    ).replace("-", " dash ")
     # 2. Add spaces between digits for serial number reading
     seg_text = re.sub(r"(\d)", r"\1 ", seg_text)
     # Clean up any accidental double spaces created by the regex
@@ -329,51 +324,83 @@ def normalize_segment_text(seg_text):
     return seg_text
 
 
-def map_step_with_word_segments(original_step, edited_step_text):
-    # 1. Unroll using WhisperX's pre-defined word segments
-    # orig_words_tracked = []
-    # for seg_idx, seg in enumerate(original_step["segments"]):
-    #    for word_dict in seg.get("words", []):
-    #        orig_words_tracked.append({"word": word_dict["word"], "seg_idx": seg_idx})
+def map_step_with_word_segments(orig_step, edited_step_text):
+    proc_step_edit = normalize_segment_text(edited_step_text)
 
-    orig_words_tracked = original_step["word_segments"]
-    orig_norm = [normalize_word(item["word"]) for item in orig_words_tracked]
-    # orig_norm = [item["word"] for item in orig_words_tracked]
+    new_segment_words = [[] for _ in orig_step["segments"]]
 
-    edit_words = edited_step_text.split()
-    edit_norm = [normalize_word(w) for w in edit_words]
+    iword = 0
 
-    # 2. Sequence Alignment
-    matcher = difflib.SequenceMatcher(None, orig_norm, edit_norm)
-    opcodes = matcher.get_opcodes()
+    for diff in difflib.ndiff(orig_step["text"].split(), proc_step_edit.split()):
+        match diff[:2]:
+            case "? ":
+                continue
+            case "+ ":
+                seg_idx = orig_step["word_segments"][iword - 1]["seg_idx"]
+                new_segment_words[seg_idx].append(
+                    {"word": diff[2:], "iword_orig": iword - 1}
+                )
+                # print(
+                #    new_word_segments[seg_idx][-1]["word"],
+                #    _step["word_segments"][iword - 1]["word"],
+                #    iword - 1,
+                # )
+            case "- ":
+                # orig_word_segments.append(d[2:])
+                iword += 1
+            case "  ":
+                # orig_word_segments.append(d[2:])
+                seg_idx = orig_step["word_segments"][iword]["seg_idx"]
+                new_segment_words[seg_idx].append(
+                    {"word": diff[2:], "iword_orig": iword}
+                )
+                iword += 1
 
-    new_segment_words = [[]] * len(original_step["segments"])
+                # print(
+                #    new_word_segments[seg_idx][-1]["word"],
+                #    _step["word_segments"][iword - 1]["word"],
+                #    iword - 1,
+                # )
+            case _:
+                raise ValueError(
+                    'diff prefix can only be one of "? ", "+ ", "- ", "  "!!'
+                )
+    repeats = defaultdict(list)
+    for iseg, seg in enumerate(new_segment_words):
+        # print(iseg)
+        for iwrd, wrd in enumerate(seg):
+            # print(iseg, iwrd, wrd)
+            repeats[wrd["iword_orig"]].append((iseg, iwrd))
 
-    edit_mapped_step = {"segments": [], "word_segments": []}
-    # 3. Distribute edits into segment buckets
-    for tag, i1, i2, j1, j2 in opcodes:
-        if tag in ("equal", "replace"):
-            for orig_idx, edit_idx in zip(range(i1, i2), range(j1, j2)):
-                seg_id = orig_words_tracked[orig_idx]["seg_idx"]
-                new_segment_words[seg_id].append(edit_words[edit_idx])
+    for iwrd_orig, new_word_idx in repeats.items():
+        orig_start = orig_step["word_segments"][iwrd_orig]["start"]
+        orig_end = orig_step["word_segments"][iwrd_orig]["end"]
+        num_words = len(new_word_idx)
+        if num_words == 1:
+            iseg, iwrd = new_word_idx[0]
+            new_segment_words[iseg][iwrd]["start"] = orig_start
+            new_segment_words[iseg][iwrd]["end"] = orig_end
 
-        elif tag == "insert":
-            seg_id = orig_words_tracked[i1 - 1]["seg_idx"] if i1 > 0 else 0
-            for edit_idx in range(j1, j2):
-                new_segment_words[seg_id].append(edit_words[edit_idx])
+        if num_words > 1:
+            dur_per_wrd = (orig_end - orig_end) / float(num_words + 1)
+
+            for i, (iseg, iwrd) in enumerate(new_word_idx):
+                new_segment_words[iseg][iwrd]["start"] = orig_start + i * dur_per_wrd
+                new_segment_words[iseg][iwrd]["end"] = (
+                    orig_start + (i + 1) * dur_per_wrd
+                )
 
     # 4. Re-roll the segments and apply Kokoro Regex
-    for i, seg in enumerate(original_step["segments"]):
+    edit_mapped_step = {"segments": [], "word_segments": []}
+    for i, seg in enumerate(orig_step["segments"]):
         if len(new_segment_words[i]) > 0:
             # The raw text as edited by the user
-            raw_segment_text = " ".join(new_segment_words[i])
+            raw_segment_text = " ".join(w["word"] for w in new_segment_words[i])
 
-            # --- APPLY KOKORO REGEX ---
-            kokoro_text = normalize_segment_text(raw_segment_text)
+            # kokoro_text = normalize_segment_text(raw_segment_text)
             # --- DETECT EDITS ---
             # Compare the new raw text with the original WhisperX text
-            original_text_clean = " ".join(seg["text"].split())
-            is_edited = raw_segment_text != original_text_clean
+            is_edited = raw_segment_text != seg["text"]
 
             edit_mapped_step["segments"].append(
                 {
@@ -381,11 +408,13 @@ def map_step_with_word_segments(original_step, edited_step_text):
                     "end": seg["end"],
                     "orig_text": seg["text"],
                     "text": raw_segment_text,  # Use this for UI / Subtitles
-                    "kokoro_text": kokoro_text,  # Feed this directly into Kokoro
+                    # "kokoro_text": kokoro_text,  # Feed this directly into Kokoro
                     "is_edited": is_edited,  # True if the user changed this segment
-                    "words": new_segment_words,
+                    "words": new_segment_words[i],
                 }
             )
+
+            edit_mapped_step["word_segments"].extend(new_segment_words[i])
 
     return edit_mapped_step
 
@@ -432,7 +461,19 @@ def word_align_seg_kkr_to_wspx(
     kkr_audio_tensor = seg_kkr_pred.audio
     # kkr_pred_dur_tensor = seg_kkr_pred.pred_dur
 
+    # avg_word_dur = (seg_aligned_wspx["end"] - seg_aligned_wspx["start"]) / float(
+    #    len(seg_aligned_wspx["words"])
+    # )
+
+    # print(avg_word_dur)
+    # wspx_word_start_times = tuple(
+    #    word["start"]
+    #    if isinstance(word, dict)
+    #    else seg_aligned_wspx["start"] + iword * avg_word_dur
+    #    for iword, word in enumerate(seg_aligned_wspx["words"])
+    # )
     wspx_word_start_times = tuple(word["start"] for word in seg_aligned_wspx["words"])
+    # print(wspx_word_start_times)
 
     aligned_kkr_word_segs = []
     total_offset = int(init_offset)
@@ -478,17 +519,15 @@ def step_text_to_speech(stepfile, outfile, step_text=None, sample_rate=24000, **
         step = json.load(fin)
 
     step_segs = (
-        map_step_with_word_segments(step, step_text)
-        if step_text is not None
-        else step["segments"]
+        map_step_with_word_segments(step, step_text) if step_text is not None else step
     )
-    seg_text_label = "kokoro_text" if step_text is not None else "text"
+    # seg_text_label = "kokoro_text" if step_text is not None else "text"
 
     total_offset = 0
     aligned_words = []
 
-    for iseg, seg in enumerate(step_segs):
-        seg_kkr_pred = text_to_speech(seg[seg_text_label], **kwargs)
+    for iseg, seg in enumerate(step_segs["segments"]):
+        seg_kkr_pred = text_to_speech(seg["text"], **kwargs)
         aligned_seg_words, total_offset = word_align_seg_kkr_to_wspx(
             seg, seg_kkr_pred, sample_rate, total_offset
         )

@@ -55,9 +55,10 @@ def process_bom_data(fpath, out_dir):
         print(df_key)
         print(df.head())
         if df_key == "Master_BOM":
-            steps[0].append(df_key)
-            steps[1].append(df[1:])
-            steps[2].append([])
+            # steps[0].append(df_key)
+            # steps[1].append(df[1:])
+            # steps[2].append([])
+            pass
         elif df_key != "BOM_Export":
             if len(df["Item number"]) > 0:
                 mask = df["Item number"] == "Tool"
