@@ -1,13 +1,13 @@
 import os
-import gc
 import sys
 import pickle
 import re
 import difflib
 import json
-from functools import lru_cache, reduce
+from functools import lru_cache
 from collections import defaultdict
 from pathlib import Path
+import subprocess
 
 from pandas import read_excel
 from natsort import natsorted
@@ -32,10 +32,11 @@ def setup_ffmpeg():
     os.environ["PATH"] = new_path
 
 
-setup_ffmpeg()
+# setup_ffmpeg()
 
 import soundfile as sf
 import whisperx
+import whisperx.utils
 from moviepy import concatenate_videoclips, VideoFileClip, AudioFileClip
 from kokoro.pipeline import KPipeline
 
@@ -124,6 +125,38 @@ def read_and_combine_videos(video_dir, audio_dir, thumbnail_path=None):
     combined_video.close()
 
 
+def add_subtitles_to_step(step_path, video_path, language="en"):
+    with step_path.open("r") as fin:
+        step = json.load(fin)
+
+    if "language" not in step:
+        step["language"] = language
+
+    whisperx.utils.WriteSRT(step_path.parent)(
+        step,
+        step_path,
+        {
+            "max_line_count": None,
+            "max_line_width": None,
+            "highlight_words": True,
+        },
+    )
+
+    subprocess.call(
+        [
+            "ffmpeg",
+            "-i",
+            str(video_path),
+            "-vf",
+            f"subtitles='{step_path.with_suffix('.srt').resolve().as_posix().replace(':', r'\:')}'",
+            video_path.with_stem(f"{video_path.stem}_wSubs"),
+            "-y",
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
 def video_step_slicer(steps, video_path, step_audio_files, out_dir):
     assert len(steps) == len(step_audio_files), (
         f"Expected one audio file per step, but got {len(step_audio_files)} audio files for {len(steps)} steps!"
@@ -140,6 +173,7 @@ def video_step_slicer(steps, video_path, step_audio_files, out_dir):
         step_audio = AudioFileClip(step_audio_files[istep])
 
         step_video_clips.append(str(out_dir / f"AFHeart{istep}.mp4"))
+
         full_video_no_audio[step["start"] : step["end"]].with_audio(
             step_audio
         ).write_videofile(
@@ -160,7 +194,11 @@ def video_step_slicer(steps, video_path, step_audio_files, out_dir):
             threads=8,
         )
 
+        # Example usage for adding subtitles:
+        add_subtitles_to_step(step_file, out_dir / f"TmpOGAud{istep}.mp4")
+
         step_audio.close()
+
     full_video.close()
     full_video_no_audio.close()
     return step_video_clips

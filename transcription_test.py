@@ -26,6 +26,7 @@ with app.setup:
         step_text_to_speech,
         video_step_slicer, map_step_with_word_segments,
         normalize_segment_text,
+        add_subtitles_to_step,
     )
 
 
@@ -39,6 +40,13 @@ with app.setup:
 @app.cell
 def _():
     _istep = 0
+    add_subtitles_to_step(mo.notebook_dir() / "StepSegs" / f"Step{_istep}.json", mo.notebook_dir() / "StepSegs"/ f"TmpOGAud{_istep}.mp4")
+    return
+
+
+app._unparsable_cell(
+    r"""
+    |_istep = 0
     _audioClipPath = mo.notebook_dir() / "StepSegs" / f"AFHeartFullStep{_istep}.mp3"
     _videoClipPath = mo.notebook_dir() / "StepSegs" / f"AFHeart{_istep}.mp4"
 
@@ -49,8 +57,9 @@ def _():
     #print(json.dumps(mapped_edit_step, indent=4))
 
     step_text_to_speech(_stepPath, mo.notebook_dir() / "StepSegs" / f"AFHeartEditedStep{_istep}.mp3", _newText)
-
-    return
+    """,
+    name="_"
+)
 
 
 @app.function
@@ -100,7 +109,6 @@ def _():
     _newTxt = "Start step one. Insert shoulder screw through wheel. Apply loctite. Screw into wheel and wheel block. Ensure that you're screwing the wheel onto the side where the set screw will be nearest to the wheel. Use a 964-532 Allen key to tighten. End step one."
 
     RerenderStepAudio(_istep, _newTxt)
-
     return
 
 
