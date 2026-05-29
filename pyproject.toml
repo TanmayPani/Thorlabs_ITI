@@ -1,7 +1,7 @@
 [project]
 name = "instruction-transcription-interface"
 version = "0.1.0"
-description = "Add your description here"
+description = "Turn narrated assembly-instruction videos into editable, step-by-step PowerPoint decks with re-synthesized, time-aligned narration."
 readme = "README.md"
 requires-python = ">=3.12, <3.14"
 dependencies = [
