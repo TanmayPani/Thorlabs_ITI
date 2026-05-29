@@ -6,14 +6,15 @@ from pathlib import Path
 
 from threading import Thread
 from pandas import read_pickle, DataFrame  # , read_csv
-from moviepy import VideoFileClip, AudioFileClip  # , CompositeAudioClip
 
 import wx
 
 from wxSlides import wxPresentation, wxTextBox
 from snippets import (
+    ffprobe_duration,
     process_bom_data,
     read_and_combine_videos,
+    run_ffmpeg,
     speech_to_text,
     step_slicer,
     step_text_to_speech,
@@ -364,27 +365,18 @@ class ThorLabsITI(wx.Frame):
 
         # self.Steps[istep]["segments"][:] = stepSegments
 
-        videoClip = (
-            VideoFileClip(self.SegPath / f"AFHeart{istep}.mp4")
-            .resized(0.5)
-            .without_audio()
-        )
-
-        audioClip = AudioFileClip(audioClipPath)
-
-        videoClip = videoClip.with_audio(audioClip)
-
-        videoClip.write_videofile(
-            self.SegPath / f"AFHeartEdited{istep}.mp4",
-            codec="libx264",
-            audio_codec="aac",
-            preset="veryfast",
-            logger=None,
-            threads=8,
-        )
-
-        audioClip.close()
-        videoClip.close()
+        # Swap the edited TTS audio onto the existing (already half-res) step
+        # video. Copying the video stream avoids any re-encode or resize; `-t`
+        # caps the output at the video's length so the visual isn't truncated.
+        srcVideo = self.SegPath / f"AFHeart{istep}.mp4"
+        run_ffmpeg([
+            "-i", str(srcVideo),
+            "-i", str(audioClipPath),
+            "-t", str(ffprobe_duration(srcVideo)),
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "aac",
+            str(self.SegPath / f"AFHeartEdited{istep}.mp4"),
+        ])
 
     def AddSlides(self):
         # vidFiles = {}

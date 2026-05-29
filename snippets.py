@@ -27,9 +27,10 @@ def setup_ffmpeg():
 
     # The folder where you put ffmpeg.exe, ffprobe.exe, ffplay.exe
     ffmpeg_dir = os.path.join(base_path, "ffmpeg", "bin")
-    current_path = os.environ.get("PATH", "")
-    new_path = os.path.join(current_path, ffmpeg_dir)
-    os.environ["PATH"] = new_path
+    # Prefer a bundled ffmpeg if present, but never clobber the existing PATH
+    # (so the system ffmpeg is still found in a normal dev environment).
+    if os.path.isdir(ffmpeg_dir):
+        os.environ["PATH"] = ffmpeg_dir + os.pathsep + os.environ.get("PATH", "")
 
 
 setup_ffmpeg()
@@ -37,8 +38,53 @@ setup_ffmpeg()
 import soundfile as sf
 import whisperx
 import whisperx.utils
-from moviepy import concatenate_videoclips, VideoFileClip, AudioFileClip
 from kokoro.pipeline import KPipeline
+
+
+def run_ffmpeg(args):
+    """Run `ffmpeg <args>` quietly, raising with stderr captured on failure."""
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-y", "-loglevel", "error", *args],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def ffprobe_dims(path):
+    """Return (width, height) of the first video stream via ffprobe."""
+    out = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=s=x:p=0",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    width, height = (int(x) for x in out.split("x"))
+    return width, height
+
+
+def ffprobe_duration(path):
+    """Return the duration in seconds of the media at `path` via ffprobe."""
+    out = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return float(out)
 
 
 def process_bom_data(fpath, out_dir):
@@ -89,40 +135,60 @@ def process_bom_data(fpath, out_dir):
 
 
 def read_and_combine_videos(video_dir, audio_dir, thumbnail_path=None):
-    if not (video_dir / "combined.mp4").exists():
+    combined_path = video_dir / "combined.mp4"
+    if not combined_path.exists():
         print("Creating combined.mp4...")
-        video_files = list(video_dir.glob("*.mp4"))
+        video_files = natsorted(video_dir.glob("*.mp4"))
 
-        if len(video_files) > 1:
-            sorted_video_files = [fvid for fvid in natsorted(video_files)]
-            combined_video = concatenate_videoclips(sorted_video_files)
-
-            combined_video.write_videofile(
-                str(video_dir / "combined.mp4"),
-                temp_audiofile="temp-audio.m4a",
-                remove_temp=True,
-                audio_codec="aac",
-                # codec=self.get_best_codec(),
-                codec="libx264",
-                threads=8,
-                logger=None,
-                preset="veryfast",
-            )
-        elif len(video_files) == 1:
-            print(f"Creating combined.mp4 from {video_files[0]}...")
-            video_files[0].rename(video_dir / "combined.mp4")
-            combined_video = VideoFileClip(str(video_dir / "combined.mp4"))
-        else:
+        if len(video_files) == 0:
             raise FileNotFoundError(f"No video files found in {str(video_dir)}!")
 
-    else:
-        combined_video = VideoFileClip(video_dir / "combined.mp4")
+        # Everything downstream uses half-resolution video, so downscale once
+        # here. Target = half the first clip's dimensions, rounded down to even
+        # (libx264 / yuv420p require even dimensions).
+        width, height = ffprobe_dims(video_files[0])
+        tw, th = (width // 2) & ~1, (height // 2) & ~1
 
+        if len(video_files) == 1:
+            print(f"Creating combined.mp4 from {video_files[0]}...")
+            run_ffmpeg([
+                "-i", str(video_files[0]),
+                "-vf", f"scale={tw}:{th}",
+                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                str(combined_path),
+            ])
+        else:
+            inputs = []
+            for fvid in video_files:
+                inputs += ["-i", str(fvid)]
+            n = len(video_files)
+            # Scale each input to the common target, then concatenate v+a.
+            filtergraph = "".join(
+                f"[{i}:v]scale={tw}:{th},setsar=1[v{i}];" for i in range(n)
+            )
+            filtergraph += "".join(f"[v{i}][{i}:a]" for i in range(n))
+            filtergraph += f"concat=n={n}:v=1:a=1[v][a]"
+            run_ffmpeg([
+                *inputs,
+                "-filter_complex", filtergraph,
+                "-map", "[v]", "-map", "[a]",
+                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+                "-c:a", "aac",
+                str(combined_path),
+            ])
+
+    # Extract the audio track and a poster thumbnail from the combined video.
+    run_ffmpeg([
+        "-i", str(combined_path),
+        "-vn", "-acodec", "libmp3lame", "-q:a", "2",
+        str(audio_dir / "combined.mp3"),
+    ])
     if thumbnail_path is not None:
-        combined_video.save_frame(thumbnail_path, t=0)
-    combined_video.audio.write_audiofile(audio_dir / "combined.mp3")
-    combined_video.audio.close()
-    combined_video.close()
+        run_ffmpeg([
+            "-ss", "0", "-i", str(combined_path),
+            "-frames:v", "1", str(thumbnail_path),
+        ])
 
 
 def add_subtitles_to_step(step_path, video_path, language="en"):
@@ -162,45 +228,45 @@ def video_step_slicer(steps, video_path, step_audio_files, out_dir):
         f"Expected one audio file per step, but got {len(step_audio_files)} audio files for {len(steps)} steps!"
     )
 
-    full_video = VideoFileClip(video_path).resized(0.5)
-    full_video_no_audio = VideoFileClip(video_path).resized(0.5).without_audio()
-
+    # combined.mp4 is already half-resolution (see read_and_combine_videos), so
+    # no scaling is needed here. `-ss` before `-i` seeks quickly to the step
+    # start; because we re-encode, the cut is frame-accurate. `-t` then limits
+    # the output to the step duration.
     step_video_clips = []
     for istep, step_file in enumerate(steps):
         with step_file.open("r") as fin:
             step = json.load(fin)
 
-        step_audio = AudioFileClip(step_audio_files[istep])
+        start = step["start"]
+        duration = step["end"] - step["start"]
 
-        step_video_clips.append(str(out_dir / f"AFHeart{istep}.mp4"))
+        af_heart = str(out_dir / f"AFHeart{istep}.mp4")
+        step_video_clips.append(af_heart)
 
-        full_video_no_audio[step["start"] : step["end"]].with_audio(
-            step_audio
-        ).write_videofile(
-            step_video_clips[-1],
-            codec="libx264",
-            audio_codec="aac",
-            preset="veryfast",
-            logger=None,
-            threads=8,
-        )
+        # Step video with the regenerated TTS audio (video from input 0, audio
+        # from the TTS mp3 in input 1).
+        run_ffmpeg([
+            "-ss", str(start), "-i", str(video_path),
+            "-i", str(step_audio_files[istep]),
+            "-t", str(duration),
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            af_heart,
+        ])
 
-        full_video[step["start"] : step["end"]].write_videofile(
+        # Step video keeping the original audio.
+        run_ffmpeg([
+            "-ss", str(start), "-i", str(video_path),
+            "-t", str(duration),
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
             str(out_dir / f"TmpOGAud{istep}.mp4"),
-            codec="libx264",
-            audio_codec="aac",
-            preset="veryfast",
-            logger=None,
-            threads=8,
-        )
+        ])
 
         # Example usage for adding subtitles:
         add_subtitles_to_step(step_file, out_dir / f"TmpOGAud{istep}.mp4")
 
-        step_audio.close()
-
-    full_video.close()
-    full_video_no_audio.close()
     return step_video_clips
 
 
@@ -344,11 +410,6 @@ def step_slicer(combined_path, out_dir):
     return step_files
 
 
-def normalize_word(word):
-    # Lowercase and strip punctuation for consistent alignment
-    word = re.sub(r"[^\w\s]", "", word).lower()
-
-
 def normalize_segment_text(seg_text):
     # 1. Remove bracketed text and replace hyphens
     seg_text = re.sub(
@@ -420,7 +481,7 @@ def map_step_with_word_segments(orig_step, edited_step_text):
             new_segment_words[iseg][iwrd]["end"] = orig_end
 
         if num_words > 1:
-            dur_per_wrd = (orig_end - orig_end) / float(num_words + 1)
+            dur_per_wrd = (orig_end - orig_start) / float(num_words + 1)
 
             for i, (iseg, iwrd) in enumerate(new_word_idx):
                 new_segment_words[iseg][iwrd]["start"] = orig_start + i * dur_per_wrd

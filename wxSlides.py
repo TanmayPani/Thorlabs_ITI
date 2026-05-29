@@ -3,8 +3,6 @@ from pathlib import Path
 import subprocess
 import textwrap
 
-import numpy as np
-
 import wx
 from wx.media import MediaCtrl, MC_NO_AUTORESIZE
 from wx.grid import Grid
@@ -17,7 +15,6 @@ from pptx.oxml import parse_xml
 from lxml import etree
 
 from PIL import Image, ImageDraw, ImageFont  # , ImageText
-from moviepy import ImageClip, ColorClip, CompositeVideoClip
 
 
 def xpath(el, query: str):
@@ -103,11 +100,6 @@ def text_to_scrolling_video(
     # fps=5,
 ):
 
-    # _width = int(width * 2)
-    # _height = int(height * 2)
-    # _font_size = int(font_size * 2)
-    # _speed = int(speed * 2)
-    # _hmargin = int(hmargin * 2)
     _width = int(460)
     _height = int(60)
     _font_size = int(font_size * 2)
@@ -124,70 +116,63 @@ def text_to_scrolling_video(
     max_chars = int((_width - (2 * _hmargin)) / avg_char_width)
     wrapped_text = "\n".join(textwrap.wrap(text, width=max_chars - 2))
 
-    # 3. Calculate the required height of the final image
+    # 3. Calculate the required height of the canvas
     # We use a dummy image to measure exactly how tall the text block will be
     dummy_draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
     bbox = dummy_draw.multiline_textbbox((0, 0), wrapped_text, font=font)
     text_height = bbox[3] - bbox[1]
-    text_width = bbox[2] - bbox[0]
 
-    # Add a little buffer to the bottom just to be safe
-    img_height = text_height + 2 * _font_size
-    # img_width = text_width + 2 * _hmargin
+    # The scrollable canvas must be at least as tall as the viewport.
+    img_height = max(text_height + 2 * _font_size, _height)
 
-    # 4. Generate the Text Image Canvas (Transparent Background)
-    # We make the image exactly the width of the video, so X positioning is locked to 0
-    img = Image.new("RGBA", (_width, img_height), (0, 0, 0, 0))
+    # 4. Render the text onto a tall white canvas (no moviepy compositing).
+    # X is locked to the margin; white background replaces the old ColorClip.
+    img = Image.new("RGB", (_width, img_height), (255, 255, 255))
     draw = ImageDraw.Draw(img)
-
-    # Draw the text! We apply the hmargin physically inside the image
     draw.multiline_text(
         (_hmargin, 0),
         wrapped_text,
         font=font,
         fill="black",
         align="left",
-        # spacing=avg_char_width,
     )
 
-    # 5. Send directly to MoviePy
-    # Convert Pillow Image to a NumPy array, then into a MoviePy ImageClip
-    img_array = np.asarray(img)
-    txt_clip = ImageClip(img_array)
+    tall_path = Path(f"{video_file}_tall.png")
+    img.save(tall_path)
 
-    # 6. Calculate duration and Animate
+    # 5. Poster frame: the top viewport, scaled to the final output size.
+    out_w, out_h = _width // 2, _height // 2
+    img.crop((0, 0, _width, _height)).resize((out_w, out_h)).save(f"{video_file}.png")
+
+    # 6. Pan a viewport down the canvas with ffmpeg. The crop window's Y offset
+    # is an expression in the output time `t`, so ffmpeg does the scroll and the
+    # final downscale internally -- no raw frames are piped through Python.
     delta_h = img_height - _height
-    # print("Width",_width)
-    # print("Height",_height)
-    # print("Duration",txt_clip.duration)
-    # We only move the Y coordinate. X stays 0 because margins are baked into the image.
-    txt_clip = (
-        txt_clip.with_position(lambda t: (0, -_speed * t)).with_duration(
-            delta_h / _speed
-        )
-        if delta_h > 0
-        else txt_clip.with_duration(1.0 / fps)
-    )
-    # print("Width",_width)
-    # print("Height",_height)
-    # print("Duration",txt_clip.duration)
+    if delta_h > 0:
+        duration = delta_h / _speed
+        crop_y = f"min({_speed}*t\\,{delta_h})"
+    else:
+        duration = 1.0 / fps
+        crop_y = "0"
 
-    bg_clip = ColorClip(
-        (_width, _height), color=(255, 255, 255), duration=txt_clip.duration
-    )
-    # 7. Composite and Save
-    video = CompositeVideoClip([bg_clip, txt_clip]).without_audio().resized(0.5)
-    video.write_videofile(
-        f"{video_file}.mp4",
-        fps=fps,
-        # codec="libx264",
-        # audio_codec="aac",
-        # threads=8,
-        # logger=None,
-        # preset="veryfast",
-    )
-    video.save_frame(f"{video_file}.png")
-    # print(wrapped_text)
+    vf = f"crop={_width}:{_height}:0:{crop_y},scale={out_w}:{out_h}"
+    try:
+        subprocess.run(
+            [
+                "ffmpeg", "-nostdin", "-y", "-loglevel", "error",
+                "-loop", "1", "-i", str(tall_path),
+                "-vf", vf,
+                "-t", str(duration),
+                "-r", str(fps),
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                f"{video_file}.mp4",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        tall_path.unlink(missing_ok=True)
 
 
 def add_movie(
