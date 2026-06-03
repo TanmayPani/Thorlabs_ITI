@@ -1,11 +1,35 @@
 from collections import defaultdict
 from pathlib import Path
 import subprocess
+import tempfile
 import textwrap
 
 import wx
-from wx.media import MediaCtrl, MC_NO_AUTORESIZE
+import wx.html2
 from wx.grid import Grid
+
+
+def _webview_backend():
+    """Prefer the Chromium/Edge (WebView2) backend, which decodes H.264 itself
+    -- no OS DirectShow/Media Foundation codecs needed. Falls back to default."""
+    try:
+        if wx.html2.WebView.IsBackendAvailable(wx.html2.WebViewBackendEdge):
+            return wx.html2.WebViewBackendEdge
+    except Exception:
+        pass
+    return wx.html2.WebViewBackendDefault
+
+
+# Minimal page that fills the pane with the video and shows native controls.
+_PREVIEW_HTML = (
+    "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+    "<style>html,body{margin:0;height:100%;background:#000;overflow:hidden}"
+    "video{width:100%;height:100%;object-fit:contain;background:#000}</style>"
+    "</head><body>"
+    "<video id='v' controls preload='metadata' src='__SRC__'></video>"
+    "</body></html>"
+)
+
 
 import pptx
 from pptx.slide import Slide
@@ -344,22 +368,106 @@ class wxMovieShape(wxShape):
         orient=wx.HORIZONTAL,
         title="",
         file_name=None,
-        style=MC_NO_AUTORESIZE,
         **kwargs,
     ):
         super().__init__(parent, orient=orient, title=title)
-        self.movieCtrl = MediaCtrl(self.StaticBox, style=style, **kwargs)
-        self.movieCtrl.ShowPlayerControls()
-        self.Add(self.movieCtrl, wx.SizerFlags(1).Expand().Border())
+        self.fileName = None
+        self.thumbFileName = None
+        self._htmlPath = None
+        self.webView = None
+
+        # The WebView (Chromium) is created lazily -- only while this slide is the
+        # visible notebook page (see wxPresentation) -- and destroyed when you
+        # leave, so a deck with many steps doesn't hold dozens of browser views
+        # in memory. A black placeholder keeps the layout stable meanwhile.
+        self.placeholder = wx.Panel(self.StaticBox)
+        self.placeholder.SetBackgroundColour(wx.BLACK)
+        phText = wx.StaticText(
+            self.placeholder, label="Select this tab to load the video"
+        )
+        phText.SetForegroundColour(wx.WHITE)
+        phSizer = wx.BoxSizer(wx.VERTICAL)
+        phSizer.AddStretchSpacer()
+        phSizer.Add(phText, wx.SizerFlags(0).Center())
+        phSizer.AddStretchSpacer()
+        self.placeholder.SetSizer(phSizer)
+        self.Add(self.placeholder, wx.SizerFlags(1).Expand().Border())
+
         if file_name is not None:
             self.LoadVideo(file_name)
 
     def LoadVideo(self, file_name, thumbnail_file_name=None):
+        # Just record the source; the WebView (if any) is (re)loaded on show.
         self.fileName = file_name
         self.thumbFileName = thumbnail_file_name
-        status = self.movieCtrl.Load(self.fileName)
-        if not status:
-            raise ValueError(f"Can't load {self.fileName}, not a valid video file")
+        if self.webView is not None:
+            self._LoadIntoWebView()
+
+    def ShowPreview(self):
+        """Create the WebView (if needed) and load the current video."""
+        if self.fileName is None:
+            return
+        if self.webView is None:
+            self.webView = wx.html2.WebView.New(
+                self.StaticBox, backend=_webview_backend()
+            )
+            self.Add(self.webView, wx.SizerFlags(1).Expand().Border())
+            self.placeholder.Hide()
+            self._Relayout()
+        self._LoadIntoWebView()
+
+    def HidePreview(self):
+        """Destroy the WebView to release its (Chromium) memory."""
+        if self.webView is not None:
+            self.Detach(self.webView)
+            self.webView.Destroy()
+            self.webView = None
+            self.placeholder.Show()
+            self._Relayout()
+
+    def _LoadIntoWebView(self):
+        # The Edge backend ignores SetPage()'s base URL (page origin becomes
+        # null), which blocks file:// media. So write a tiny real .html file and
+        # load it by URL: a genuine file:// page can load the file:// video.
+        if self._htmlPath is None:
+            tmp = tempfile.NamedTemporaryFile(
+                suffix=".html", prefix="iti_preview_", delete=False
+            )
+            tmp.close()
+            self._htmlPath = Path(tmp.name)
+        src = Path(self.fileName).resolve().as_uri()
+        self._htmlPath.write_text(
+            _PREVIEW_HTML.replace("__SRC__", src), encoding="utf-8"
+        )
+        self.webView.LoadURL(self._htmlPath.resolve().as_uri())
+
+    def _Relayout(self):
+        parent = self.StaticBox.GetParent()
+        if parent is not None:
+            parent.Layout()
+
+    def Stop(self):
+        """Pause playback (e.g. before re-rendering this step's video)."""
+        if self.webView is None:
+            return
+        try:
+            self.webView.RunScript(
+                "var v=document.getElementById('v');if(v){v.pause();}"
+            )
+        except Exception:
+            pass
+
+    def Unload(self):
+        """Release the current media so its file is no longer held open."""
+        if self.webView is None:
+            return
+        try:
+            self.webView.RunScript(
+                "var v=document.getElementById('v');"
+                "if(v){v.pause();v.removeAttribute('src');v.load();}"
+            )
+        except Exception:
+            pass
 
     def SaveToSlide(
         self,
@@ -673,9 +781,29 @@ class wxPresentation(wx.Notebook):
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
         self.AddPage(wxTitleSlide(self), "Setup")
+        # Only the visible page keeps a live WebView preview (see wxMovieShape).
+        self.Bind(wx.EVT_NOTEBOOK_PAGE_CHANGED, self._OnPageChanged)
 
     def __getitem__(self, idx):
         return self.GetPage(idx)
+
+    def _OnPageChanged(self, evt):
+        old, new = evt.GetOldSelection(), evt.GetSelection()
+        if old != wx.NOT_FOUND and old != new:
+            self._SetPagePreview(old, False)
+        if new != wx.NOT_FOUND:
+            self._SetPagePreview(new, True)
+        evt.Skip()
+
+    def _SetPagePreview(self, index, show):
+        if index < 0 or index >= self.GetPageCount():
+            return
+        try:
+            movies = getattr(self.GetPage(index), "shapes", {}).get("movie", [])
+        except RuntimeError:  # page already destroyed
+            return
+        for movie in movies:
+            (movie.ShowPreview if show else movie.HidePreview)()
 
     def AddStepSlide(
         self, title, text, file_name, bom_tables=None, movie_thumbnail_file_name=None

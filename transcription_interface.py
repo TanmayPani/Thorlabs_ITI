@@ -48,9 +48,9 @@ class ThorLabsITI(wx.Frame):
         self.BOMWriterCB.SetValue("No BOM")
         buttonSizer.Add(self.BOMWriterCB, wx.SizerFlags(0).Align(wx.TOP).Border(wx.ALL))
 
-        combineVideoButton = wx.Button(buttonSizer.StaticBox, label="Compress Video")
+        self.combineVideoButton = wx.Button(buttonSizer.StaticBox, label="Compress Video")
         buttonSizer.Add(
-            combineVideoButton, wx.SizerFlags(0).Align(wx.TOP).Border(wx.ALL)
+            self.combineVideoButton, wx.SizerFlags(0).Align(wx.TOP).Border(wx.ALL)
         )
 
         self.transcibeStepButton = wx.Button(
@@ -94,9 +94,9 @@ class ThorLabsITI(wx.Frame):
         self.logCtrl.Hide()
         mainSizer.Add(self.logCtrl, wx.SizerFlags(1).Expand().Border())
 
-        showLogButton = wx.ToggleButton(self.panel, label="Show Log")
+        self.showLogButton = wx.ToggleButton(self.panel, label="Show Log")
         mainSizer.Add(
-            showLogButton,
+            self.showLogButton,
             wx.SizerFlags(0).Align(wx.BOTTOM | wx.LEFT).Border(),
         )
 
@@ -108,12 +108,12 @@ class ThorLabsITI(wx.Frame):
         # self.Bind(wx.EVT_COMBOBOX, self.on_combo_selection, self.AudioWriterCB)
         # self.Bind(wx.EVT_COMBOBOX, self.BOMSelection, self.BOMWriterCB)
         self.Bind(wx.EVT_DIRPICKER_CHANGED, self.OnCorePathPicked, corePathPicker)
-        self.Bind(wx.EVT_BUTTON, self.VideoCombination, combineVideoButton)
+        self.Bind(wx.EVT_BUTTON, self.VideoCombination, self.combineVideoButton)
         self.Bind(wx.EVT_BUTTON, self.TranscribeSteps, self.transcibeStepButton)
         self.Bind(
             wx.EVT_BUTTON, self.OnRerenderStepAudios, self.rerenderStepAudioButton
         )
-        self.Bind(wx.EVT_TOGGLEBUTTON, self.OnToggleLog, showLogButton)
+        self.Bind(wx.EVT_TOGGLEBUTTON, self.OnToggleLog, self.showLogButton)
         self.Bind(wx.EVT_BUTTON, self.OnSavePPTX, self.saveFileButton)
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -150,10 +150,40 @@ class ThorLabsITI(wx.Frame):
             evt.GetEventObject().SetLabel("Show Log")
         self.panel.Layout()
 
+    def ShowLog(self):
+        """Reveal the log panel (used to surface errors)."""
+        self.logCtrl.Show()
+        self.showLogButton.SetValue(True)
+        self.showLogButton.SetLabel("Hide Log")
+        self.panel.Layout()
+
+    def ReportError(self, msg):
+        """Main-thread error handler: log it, reveal the log, and alert the user."""
+        wx.LogMessage(f"Error: {msg}")
+        self.ShowLog()
+        wx.MessageBox(msg, "Processing error", wx.OK | wx.ICON_ERROR)
+
+    def SetBusy(self, busy):
+        """Enable/disable the action buttons while a background worker runs."""
+        for btn in (
+            self.combineVideoButton,
+            self.transcibeStepButton,
+            self.rerenderStepAudioButton,
+            self.saveFileButton,
+        ):
+            btn.Enable(not busy)
+
     def OnSavePPTX(self, event):
+        if self.CorePath is None:
+            self.ReportError("No core path is selected! Please select a path before saving.")
+            return
         savePath = self.CorePath / f"{self.saveFileTBox.Text}.pptx"
         wx.LogMessage(f"Saving generated slides to {savePath}")
-        self.presMaker.Save(savePath)
+        try:
+            self.presMaker.Save(savePath)
+            wx.LogMessage("Save complete.")
+        except Exception:
+            self.ReportError(traceback.format_exc())
 
     def OnEnableRerender(self, event):
         if not self.rerenderStepAudioButton.IsEnabled():
@@ -191,17 +221,14 @@ class ThorLabsITI(wx.Frame):
             # self.panel.Layout()
 
     def VideoCombination(self, evt):
-        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
         if self.VideoPath is None:
-            raise ValueError(
+            self.ReportError(
                 "No core path is selected! Please select a path using the browser..."
             )
+            return
         wx.LogMessage("Begin video combination/renaming.")
-
-        wx.LogMessage(f"Reading video form: {self.VideoPath}")
-        # evt.GetEventObject().Disable()
-        # self.Layout()
-        # self.Update()
+        wx.LogMessage(f"Reading video from: {self.VideoPath}")
+        self.SetBusy(True)
 
         def worker():
             try:
@@ -211,32 +238,23 @@ class ThorLabsITI(wx.Frame):
                     self.AudioPath,
                     self.SegPath / "FirstFrame.jpg",
                 )
-                wx.CallAfter(wx.LogMessage, f"Moved videos into {self.VideoPath}.")
-
+                wx.CallAfter(wx.LogMessage, f"Combined video ready in {self.VideoPath}.")
             except Exception:
-                wx.CallAfter(wx.LogMessage, f"Error: {traceback.format_exc()}")
-                wx.CallAfter(evt.GetEventObject().Enable)
-                # wx.CallAfter(self.transcibeStepButton.Enable)
-
-            # wx.CallAfter(evt.GetEventObject().Enable)
-            # wx.CallAfter(self.transcibeStepButton.Enable)
+                wx.CallAfter(self.ReportError, traceback.format_exc())
+            finally:
+                wx.CallAfter(self.SetBusy, False)
 
         Thread(target=worker, daemon=True).start()
-        evt.GetEventObject().Enable()
         self.Layout()
-        # self.Update()
 
     def TranscribeSteps(self, evt):
         if self.AudioPath is None:
-            raise ValueError(
+            self.ReportError(
                 "No core path is selected! Please select a path using the browser..."
             )
+            return
 
-        # self.SetStatusText("Transcription sequence initiated.")
-        # evt.GetEventObject().Disable()
-        # self.Layout()
-        # self.Update()
-        # self.SetStatusText("Initiating thread...")  # Untoggle the button
+        self.SetBusy(True)
 
         def worker():
             try:
@@ -302,7 +320,7 @@ class ThorLabsITI(wx.Frame):
                     wx.LogMessage,
                     "Speech-Text-Speech Processes Complete! Creating slides...",
                 )
-                wx.CallAfter(self.AddSlides)
+                wx.CallAfter(self.AddSlidesSafe)
 
                 wx.CallAfter(
                     wx.LogMessage,
@@ -310,43 +328,36 @@ class ThorLabsITI(wx.Frame):
                 )
 
             except Exception:
-                # wx.CallAfter(wx.LogMessage, f"Error: {(AudioFile+'combined.mp3')}")
-                wx.CallAfter(wx.LogMessage, f"Error: {traceback.format_exc()}")
-                # wx.CallAfter(evt.GetEventObject().Enable)
-
-            # wx.CallAfter(evt.GetEventObject().Enable)
-            # wx.CallAfter(self.Layout)
+                wx.CallAfter(self.ReportError, traceback.format_exc())
+            finally:
+                wx.CallAfter(self.SetBusy, False)
 
         Thread(target=worker, daemon=True).start()
         self.Layout()
 
     def OnRerenderStepAudios(self, evt):
+        self.SetBusy(True)
+
         def worker():
             try:
                 for istep in range(self.presMaker.GetPageCount() - 1):
                     print("Rerendering step", istep)
-                    wx.CallAfter(
-                        self.presMaker.GetPage(istep + 1)
-                        .shapes["movie"][0]
-                        .movieCtrl.Stop
-                    )
-                    wx.CallAfter(
-                        self.presMaker.GetPage(istep + 1)
-                        .shapes["movie"][0]
-                        .movieCtrl.Load,
-                        "",
-                    )
+                    movie = self.presMaker.GetPage(istep + 1).shapes["movie"][0]
+                    wx.CallAfter(movie.Stop)
+                    wx.CallAfter(movie.Unload)
                     newStepTextsChanged = (
                         self.presMaker.GetPage(istep + 1).shapes["textbox"][1].Text
                     )
                     self.RerenderStepAudio(istep, newStepTextsChanged)
 
                     wx.CallAfter(
-                        self.presMaker.GetPage(istep + 1).shapes["movie"][0].LoadVideo,
+                        movie.LoadVideo,
                         str(self.SegPath / f"AFHeartEdited{istep}.mp4"),
                     )
             except Exception:
-                wx.CallAfter(wx.LogMessage, f"Error: {traceback.format_exc()}")
+                wx.CallAfter(self.ReportError, traceback.format_exc())
+            finally:
+                wx.CallAfter(self.SetBusy, False)
 
         Thread(target=worker, daemon=True).start()
         self.Layout()
@@ -378,6 +389,13 @@ class ThorLabsITI(wx.Frame):
             str(self.SegPath / f"AFHeartEdited{istep}.mp4"),
         ])
 
+    def AddSlidesSafe(self):
+        """Build slides on the main thread, surfacing any failure to the user."""
+        try:
+            self.AddSlides()
+        except Exception:
+            self.ReportError(traceback.format_exc())
+
     def AddSlides(self):
         # vidFiles = {}
         # print("Adding slides...")
@@ -396,7 +414,10 @@ class ThorLabsITI(wx.Frame):
 
         print("Adding slides...")
         # print(self.Steps)
-        for stepPath in self.SegPath.glob("Step*.json"):
+        for stepPath in sorted(
+            self.SegPath.glob("Step*.json"),
+            key=lambda p: int(p.stem.removeprefix("Step")),
+        ):
             istep = int(stepPath.stem.removeprefix("Step"))
             title = f"Step {istep + 1}"
             # print(SegInds[i])
