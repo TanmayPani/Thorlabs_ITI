@@ -1,5 +1,6 @@
 import os
 import sys
+import copy
 import pickle
 import re
 import string
@@ -235,14 +236,36 @@ def read_and_combine_videos(video_dir, audio_dir, thumbnail_path=None):
         )
 
 
-def write_step_srt(step, srt_path, language="en"):
+def _offset_step_times(step, offset):
+    """Return a copy of `step` with all segment/word timestamps shifted by -offset.
+
+    Step clips are cut with `-ss <start>`, so their timeline restarts at 0 while the
+    Step-JSON / edit-mapped timestamps are absolute. Subtracting the clip start makes
+    the SRT cues land on the clip; times are clamped at 0.
+    """
+    step = copy.deepcopy(step)
+    for seg in step.get("segments", []):
+        for key in ("start", "end"):
+            if key in seg:
+                seg[key] = max(0.0, seg[key] - offset)
+        for word in seg.get("words", []):
+            for key in ("start", "end"):
+                if key in word:
+                    word[key] = max(0.0, word[key] - offset)
+    return step
+
+
+def write_step_srt(step, srt_path, language="en", time_offset=0.0):
     """Write an SRT for an in-memory step dict (segments + word timings).
 
     `step` may be a freshly-loaded Step JSON or the edit-mapped dict returned by
     `step_text_to_speech`; both carry `segments` with per-word `start`/`end`,
-    which `highlight_words=True` needs. Returns the written SRT path.
+    which `highlight_words=True` needs. `time_offset` shifts cues to clip-relative
+    time (pass the clip's absolute start). Returns the written SRT path.
     """
     srt_path = Path(srt_path)
+    if time_offset:
+        step = _offset_step_times(step, time_offset)
     step.setdefault("language", language)
     whisperx.utils.WriteSRT(srt_path.parent)(
         step,
@@ -266,7 +289,12 @@ def add_subtitles_to_step(step_path, video_path, language="en"):
     with step_path.open("r") as fin:
         step = json.load(fin)
 
-    srt_path = write_step_srt(step, step_path.with_suffix(".srt"), language)
+    srt_path = write_step_srt(
+        step,
+        step_path.with_suffix(".srt"),
+        language,
+        time_offset=step.get("start", 0.0),
+    )
 
     run_ffmpeg(
         [

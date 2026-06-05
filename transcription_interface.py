@@ -379,9 +379,13 @@ class ThorLabsITI(wx.Frame):
         # self.Steps[istep]["segments"][:] = stepSegments
 
         # Subtitles for the edited narration: stepSegments carries the user's
-        # edited text mapped onto the TTS audio's word timings.
+        # edited text mapped onto the TTS audio's word timings. The clip starts
+        # at 0, so shift the absolute cue times by the step's start.
         srtPath = self.SegPath / f"AFHeartEdited{istep}.srt"
-        write_step_srt(stepSegments, srtPath)
+        clipStart = (
+            stepSegments["segments"][0]["start"] if stepSegments["segments"] else 0.0
+        )
+        write_step_srt(stepSegments, srtPath, time_offset=clipStart)
 
         # Swap the edited TTS audio onto the existing (already half-res) step
         # video and burn in the subtitles. The `subtitles` filter forces a video
@@ -441,7 +445,14 @@ class ThorLabsITI(wx.Frame):
                 else None
             )
 
-            vidFilePath = self.SegPath / f"TmpOGAud{istep}.mp4"
+            # Prefer the subtitled copy produced by video_step_slicer; fall back
+            # to the bare clip for older/partial renders.
+            vidWithSubs = self.SegPath / f"TmpOGAud{istep}_wSubs.mp4"
+            vidFilePath = (
+                vidWithSubs
+                if vidWithSubs.exists()
+                else self.SegPath / f"TmpOGAud{istep}.mp4"
+            )
 
             with stepPath.open("r") as fin:
                 step = json.load(fin)
