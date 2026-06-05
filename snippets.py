@@ -452,18 +452,17 @@ def step_slicer(combined_path, out_dir):
                 in filter_punkt(whisper_result["word_segments"][iword + 1]["word"])
             ):
                 filtered_word = filter_punkt(word)
-                if any(trg in filtered_word for trg in start_triggers):
-                    if start_triggered:
-                        trigger_end_logic(steps, current_seg < iseg, [])
-                        if current_seg < iseg:
-                            current_seg = iseg
-                        # start_triggered = False
+                # if start_triggered:
+                #    trigger_end_logic(steps, [], current_seg < iseg)
+                #    if current_seg < iseg:
+                #        current_seg = iseg
 
-                        # if not start_triggered:
-                    start_triggered = True
-                    # step_seg_idx = 0
-                    # steps.append({"segments": [], "word_segments": []})
-                    trigger_start_logic(steps)
+                if not start_triggered:
+                    if any(trg in filtered_word for trg in start_triggers):
+                        start_triggered = True
+                        # step_seg_idx = 0
+                        # steps.append({"segments": [], "word_segments": []})
+                        trigger_start_logic(steps)
 
                 elif any(trg in filtered_word for trg in end_triggers):
                     # if current_seg < iseg:
@@ -476,12 +475,12 @@ def step_slicer(combined_path, out_dir):
                     # steps[-1]["word_segments"].extend(
                     #    whisper_result["word_segments"][iword : iword + 3]
                     # )
-                    if not start_triggered:
-                        trigger_start_logic(steps)
+                    # if not start_triggered:
+                    #    trigger_start_logic(steps)
                     trigger_end_logic(
                         steps,
-                        current_seg < iseg,
                         whisper_result["word_segments"][iword : iword + 3],
+                        current_seg < iseg,
                     )
                     if current_seg < iseg:
                         current_seg = iseg
