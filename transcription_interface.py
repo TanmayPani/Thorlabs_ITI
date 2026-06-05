@@ -50,7 +50,9 @@ class ThorLabsITI(wx.Frame):
         self.BOMWriterCB.SetValue("No BOM")
         buttonSizer.Add(self.BOMWriterCB, wx.SizerFlags(0).Align(wx.TOP).Border(wx.ALL))
 
-        self.combineVideoButton = wx.Button(buttonSizer.StaticBox, label="Compress Video")
+        self.combineVideoButton = wx.Button(
+            buttonSizer.StaticBox, label="Compress Video"
+        )
         buttonSizer.Add(
             self.combineVideoButton, wx.SizerFlags(0).Align(wx.TOP).Border(wx.ALL)
         )
@@ -177,7 +179,9 @@ class ThorLabsITI(wx.Frame):
 
     def OnSavePPTX(self, event):
         if self.CorePath is None:
-            self.ReportError("No core path is selected! Please select a path before saving.")
+            self.ReportError(
+                "No core path is selected! Please select a path before saving."
+            )
             return
         savePath = self.CorePath / f"{self.saveFileTBox.Text}.pptx"
         wx.LogMessage(f"Saving generated slides to {savePath}")
@@ -240,7 +244,9 @@ class ThorLabsITI(wx.Frame):
                     self.AudioPath,
                     self.SegPath / "FirstFrame.jpg",
                 )
-                wx.CallAfter(wx.LogMessage, f"Combined video ready in {self.VideoPath}.")
+                wx.CallAfter(
+                    wx.LogMessage, f"Combined video ready in {self.VideoPath}."
+                )
             except Exception:
                 wx.CallAfter(self.ReportError, traceback.format_exc())
             finally:
@@ -268,7 +274,7 @@ class ThorLabsITI(wx.Frame):
                 speech_to_text(
                     self.AudioPath / "combined.mp3",
                     self.TextPath / "combined.json",
-                    model_name="distil-large-v3",
+                    model_name="large-v3",
                     device="cpu",
                     compute_type="int8",
                     vad_method="silero",
@@ -392,16 +398,31 @@ class ThorLabsITI(wx.Frame):
         # re-encode, so we can't `-c:v copy` here; `-t` caps the output at the
         # video's length so the visual isn't truncated.
         srcVideo = self.SegPath / f"AFHeart{istep}.mp4"
-        run_ffmpeg([
-            "-i", str(srcVideo),
-            "-i", str(audioClipPath),
-            "-t", str(ffprobe_duration(srcVideo)),
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-vf", subtitles_vf_arg(srtPath),
-            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            str(self.SegPath / f"AFHeartEdited{istep}.mp4"),
-        ])
+        run_ffmpeg(
+            [
+                "-i",
+                str(srcVideo),
+                "-i",
+                str(audioClipPath),
+                "-t",
+                str(ffprobe_duration(srcVideo)),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-vf",
+                subtitles_vf_arg(srtPath),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                str(self.SegPath / f"AFHeartEdited{istep}.mp4"),
+            ]
+        )
 
     def AddSlidesSafe(self):
         """Build slides on the main thread, surfacing any failure to the user."""
