@@ -18,7 +18,9 @@ from snippets import (
     speech_to_text,
     step_slicer,
     step_text_to_speech,
+    subtitles_vf_arg,
     video_step_slicer,
+    write_step_srt,
 )
 
 
@@ -376,16 +378,24 @@ class ThorLabsITI(wx.Frame):
 
         # self.Steps[istep]["segments"][:] = stepSegments
 
+        # Subtitles for the edited narration: stepSegments carries the user's
+        # edited text mapped onto the TTS audio's word timings.
+        srtPath = self.SegPath / f"AFHeartEdited{istep}.srt"
+        write_step_srt(stepSegments, srtPath)
+
         # Swap the edited TTS audio onto the existing (already half-res) step
-        # video. Copying the video stream avoids any re-encode or resize; `-t`
-        # caps the output at the video's length so the visual isn't truncated.
+        # video and burn in the subtitles. The `subtitles` filter forces a video
+        # re-encode, so we can't `-c:v copy` here; `-t` caps the output at the
+        # video's length so the visual isn't truncated.
         srcVideo = self.SegPath / f"AFHeart{istep}.mp4"
         run_ffmpeg([
             "-i", str(srcVideo),
             "-i", str(audioClipPath),
             "-t", str(ffprobe_duration(srcVideo)),
             "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "copy", "-c:a", "aac",
+            "-vf", subtitles_vf_arg(srtPath),
+            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
             str(self.SegPath / f"AFHeartEdited{istep}.mp4"),
         ])
 

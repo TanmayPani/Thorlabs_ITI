@@ -2,6 +2,7 @@ import os
 import sys
 import pickle
 import re
+import string
 import difflib
 import json
 from functools import lru_cache
@@ -56,10 +57,14 @@ def ffprobe_dims(path):
     out = subprocess.run(
         [
             "ffprobe",
-            "-v", "error",
-            "-select_streams", "v:0",
-            "-show_entries", "stream=width,height",
-            "-of", "csv=s=x:p=0",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=width,height",
+            "-of",
+            "csv=s=x:p=0",
             str(path),
         ],
         check=True,
@@ -75,9 +80,12 @@ def ffprobe_duration(path):
     out = subprocess.run(
         [
             "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
             str(path),
         ],
         check=True,
@@ -151,13 +159,23 @@ def read_and_combine_videos(video_dir, audio_dir, thumbnail_path=None):
 
         if len(video_files) == 1:
             print(f"Creating combined.mp4 from {video_files[0]}...")
-            run_ffmpeg([
-                "-i", str(video_files[0]),
-                "-vf", f"scale={tw}:{th}",
-                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-                "-c:a", "aac",
-                str(combined_path),
-            ])
+            run_ffmpeg(
+                [
+                    "-i",
+                    str(video_files[0]),
+                    "-vf",
+                    f"scale={tw}:{th}",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    str(combined_path),
+                ]
+            )
         else:
             inputs = []
             for fvid in video_files:
@@ -169,57 +187,95 @@ def read_and_combine_videos(video_dir, audio_dir, thumbnail_path=None):
             )
             filtergraph += "".join(f"[v{i}][{i}:a]" for i in range(n))
             filtergraph += f"concat=n={n}:v=1:a=1[v][a]"
-            run_ffmpeg([
-                *inputs,
-                "-filter_complex", filtergraph,
-                "-map", "[v]", "-map", "[a]",
-                "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-                "-c:a", "aac",
-                str(combined_path),
-            ])
+            run_ffmpeg(
+                [
+                    *inputs,
+                    "-filter_complex",
+                    filtergraph,
+                    "-map",
+                    "[v]",
+                    "-map",
+                    "[a]",
+                    "-c:v",
+                    "libx264",
+                    "-preset",
+                    "veryfast",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    str(combined_path),
+                ]
+            )
 
     # Extract the audio track and a poster thumbnail from the combined video.
-    run_ffmpeg([
-        "-i", str(combined_path),
-        "-vn", "-acodec", "libmp3lame", "-q:a", "2",
-        str(audio_dir / "combined.mp3"),
-    ])
+    run_ffmpeg(
+        [
+            "-i",
+            str(combined_path),
+            "-vn",
+            "-acodec",
+            "libmp3lame",
+            "-q:a",
+            "2",
+            str(audio_dir / "combined.mp3"),
+        ]
+    )
     if thumbnail_path is not None:
-        run_ffmpeg([
-            "-ss", "0", "-i", str(combined_path),
-            "-frames:v", "1", str(thumbnail_path),
-        ])
+        run_ffmpeg(
+            [
+                "-ss",
+                "0",
+                "-i",
+                str(combined_path),
+                "-frames:v",
+                "1",
+                str(thumbnail_path),
+            ]
+        )
 
 
-def add_subtitles_to_step(step_path, video_path, language="en"):
-    with step_path.open("r") as fin:
-        step = json.load(fin)
+def write_step_srt(step, srt_path, language="en"):
+    """Write an SRT for an in-memory step dict (segments + word timings).
 
-    if "language" not in step:
-        step["language"] = language
-
-    whisperx.utils.WriteSRT(step_path.parent)(
+    `step` may be a freshly-loaded Step JSON or the edit-mapped dict returned by
+    `step_text_to_speech`; both carry `segments` with per-word `start`/`end`,
+    which `highlight_words=True` needs. Returns the written SRT path.
+    """
+    srt_path = Path(srt_path)
+    step.setdefault("language", language)
+    whisperx.utils.WriteSRT(srt_path.parent)(
         step,
-        step_path,
+        srt_path,
         {
             "max_line_count": None,
             "max_line_width": None,
             "highlight_words": True,
         },
     )
+    return srt_path
 
-    subprocess.call(
+
+def subtitles_vf_arg(srt_path):
+    """Build the ffmpeg `subtitles=` video-filter arg, Windows-path-safe."""
+    escaped = Path(srt_path).resolve().as_posix().replace(":", r"\:")
+    return f"subtitles='{escaped}'"
+
+
+def add_subtitles_to_step(step_path, video_path, language="en"):
+    with step_path.open("r") as fin:
+        step = json.load(fin)
+
+    srt_path = write_step_srt(step, step_path.with_suffix(".srt"), language)
+
+    run_ffmpeg(
         [
-            "ffmpeg",
             "-i",
             str(video_path),
             "-vf",
-            f"subtitles='{step_path.with_suffix('.srt').resolve().as_posix().replace(':', r'\:')}'",
-            video_path.with_stem(f"{video_path.stem}_wSubs"),
-            "-y",
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+            subtitles_vf_arg(srt_path),
+            str(video_path.with_stem(f"{video_path.stem}_wSubs")),
+        ]
     )
 
 
@@ -245,24 +301,52 @@ def video_step_slicer(steps, video_path, step_audio_files, out_dir):
 
         # Step video with the regenerated TTS audio (video from input 0, audio
         # from the TTS mp3 in input 1).
-        run_ffmpeg([
-            "-ss", str(start), "-i", str(video_path),
-            "-i", str(step_audio_files[istep]),
-            "-t", str(duration),
-            "-map", "0:v:0", "-map", "1:a:0",
-            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            af_heart,
-        ])
+        run_ffmpeg(
+            [
+                "-ss",
+                str(start),
+                "-i",
+                str(video_path),
+                "-i",
+                str(step_audio_files[istep]),
+                "-t",
+                str(duration),
+                "-map",
+                "0:v:0",
+                "-map",
+                "1:a:0",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                af_heart,
+            ]
+        )
 
         # Step video keeping the original audio.
-        run_ffmpeg([
-            "-ss", str(start), "-i", str(video_path),
-            "-t", str(duration),
-            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            str(out_dir / f"TmpOGAud{istep}.mp4"),
-        ])
+        run_ffmpeg(
+            [
+                "-ss",
+                str(start),
+                "-i",
+                str(video_path),
+                "-t",
+                str(duration),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "veryfast",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                str(out_dir / f"TmpOGAud{istep}.mp4"),
+            ]
+        )
 
         # Example usage for adding subtitles:
         add_subtitles_to_step(step_file, out_dir / f"TmpOGAud{istep}.mp4")
@@ -324,6 +408,23 @@ def speech_to_text(
     # gc.collect()
 
 
+def filter_punkt(word):
+    rgx = f"[{re.escape(string.punctuation)}]"
+    return re.sub(rgx, "", word).casefold()
+
+
+def trigger_start_logic(steps):
+    steps.append({"segments": [], "word_segments": []})
+
+
+def trigger_end_logic(steps, new_words, new_segment):
+    if new_segment:
+        steps[-1]["segments"].append({"words": []})
+
+    steps[-1]["segments"][-1]["words"].extend(new_words)
+    steps[-1]["word_segments"].extend(new_words)
+
+
 def step_slicer(combined_path, out_dir):
     with combined_path.open("r") as fin:
         whisper_result = json.load(fin)
@@ -347,28 +448,44 @@ def step_slicer(combined_path, out_dir):
             word = word_seg["word"]
 
             if iword < total_words - 2 and (
-                "step" in whisper_result["word_segments"][iword + 1]["word"].casefold()
+                "step"
+                in filter_punkt(whisper_result["word_segments"][iword + 1]["word"])
             ):
-                if not start_triggered:
-                    if any(trg in word.casefold() for trg in start_triggers):
-                        start_triggered = True
-                        # step_seg_idx = 0
-                        steps.append({"segments": [], "word_segments": []})
-
-                else:
-                    if any(trg in word.casefold() for trg in end_triggers):
+                filtered_word = filter_punkt(word)
+                if any(trg in filtered_word for trg in start_triggers):
+                    if start_triggered:
+                        trigger_end_logic(steps, current_seg < iseg, [])
                         if current_seg < iseg:
-                            steps[-1]["segments"].append({"words": []})
                             current_seg = iseg
+                        # start_triggered = False
 
-                        steps[-1]["segments"][-1]["words"].extend(
-                            whisper_result["word_segments"][iword : iword + 3]
-                        )
-                        steps[-1]["word_segments"].extend(
-                            whisper_result["word_segments"][iword : iword + 3]
-                        )
+                        # if not start_triggered:
+                    start_triggered = True
+                    # step_seg_idx = 0
+                    # steps.append({"segments": [], "word_segments": []})
+                    trigger_start_logic(steps)
 
-                        start_triggered = False
+                elif any(trg in filtered_word for trg in end_triggers):
+                    # if current_seg < iseg:
+                    #    steps[-1]["segments"].append({"words": []})
+                    #    current_seg = iseg
+
+                    # steps[-1]["segments"][-1]["words"].extend(
+                    #    whisper_result["word_segments"][iword : iword + 3]
+                    # )
+                    # steps[-1]["word_segments"].extend(
+                    #    whisper_result["word_segments"][iword : iword + 3]
+                    # )
+                    if not start_triggered:
+                        trigger_start_logic(steps)
+                    trigger_end_logic(
+                        steps,
+                        current_seg < iseg,
+                        whisper_result["word_segments"][iword : iword + 3],
+                    )
+                    if current_seg < iseg:
+                        current_seg = iseg
+                    start_triggered = False
 
             word_seg["word"] = word
             if start_triggered:
